@@ -127,7 +127,9 @@
     k.moveTo(cont, x, cy - cb.h / 2);
     editor.select(cont);
     editor.setEditingShape(cont);
-    if (after) setTimeout(() => { document.execCommand('insertText', false, after); }, 60);
+    // Start with an invisible zero-width space: tldraw turns "+ " or "- " at the start of a
+    // text box into a bulleted list, which would eat "+ 1" typed after a drawn root.
+    setTimeout(() => { document.execCommand('insertText', false, '​' + (after || '')); }, 60);
   };
 
   // ---------------------------------------------------------------- stacked fractions and bounds
@@ -203,7 +205,11 @@
     const rowBox = (row, mul) => {
       // merge neighbouring text into one piece
       const items = [];
-      for (const it of row.items) {
+      // Brackets around plain text stay plain text: (3-k) rather than ( 3-k ) in three pieces.
+      const flat = (r) => (r.items.every((x) => x.k === 'text') ? r.items.map((x) => x.s).join('') : null);
+      for (const raw of row.items) {
+        const inner = raw.k === 'paren' ? flat(raw.row) : null;
+        const it = inner != null ? { k: 'text', s: `(${inner})` } : raw;
         const last = items[items.length - 1];
         if (it.k === 'text' && last && last.k === 'text') last.s += it.s;
         else items.push(it.k === 'text' ? { ...it } : it);
@@ -301,16 +307,23 @@
             },
           };
         }
-        const sign = textBox(n.root || '√', mul * grow);
+        // The root sign is drawn as one stroke that runs into the bar: a small tick, down, up.
         const over = lineH * mul * 0.08;
+        const sw = lineH * mul * 0.5;
+        const index = n.root === '∛' ? textBox('3', mul * 0.45) : null;
+        const pad = lineH * mul * 0.06;
         return {
-          w: sign.w + inner.w + lineH * mul * 0.1, up: inner.up + over * 2, down: Math.max(inner.down, sign.down),
+          w: sw + pad + inner.w + pad * 2, up: inner.up + over * 2, down: inner.down + over,
           draw(x, axis) {
-            const mid = axis + (inner.down - inner.up) / 2;
-            sign.draw(x, mid);
-            inner.draw(x + sign.w, axis);
             const top = axis - inner.up - over;
-            k.line([[x + sign.w * 0.82, top], [x + sign.w + inner.w + lineH * mul * 0.05, top]], { thin: true });
+            const bottom = axis + inner.down;
+            const midY = axis + (inner.down - inner.up) * 0.15;
+            k.line([
+              [x, midY], [x + sw * 0.22, midY - sw * 0.12], [x + sw * 0.55, bottom], [x + sw, top],
+              [x + sw + pad + inner.w + pad, top],
+            ], { thin: true });
+            if (index) index.draw(x + sw * 0.05, midY - index.up - sw * 0.15);
+            inner.draw(x + sw + pad, axis);
           },
         };
       }

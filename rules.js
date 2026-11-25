@@ -26,7 +26,7 @@
   // Categories the popup can switch on and off.
   const CATEGORIES = [
     { id: 'symbols', label: 'Operators, relations and arrows' },
-    { id: 'roots', label: 'Roots (sqrt, cbrt)' },
+    { id: 'roots', label: 'Roots: sqrt{…} drawn with a bar, sqrt(…) inline' },
     { id: 'scripts', label: 'Exponents and indices (x^2, e^{2x}, x_1)' },
     { id: 'draw', label: '/draw at the end of a line draws it as an equation' },
     { id: 'deriv', label: 'Draw d/dx, dy/dx, ∂/∂x stacked as you type the space after' },
@@ -231,12 +231,17 @@
     }
 
     if (on.roots) {
-      rules.push([/\\?sqrt$/i, () => '√']); // `\sqrt` works too
-      rules.push([/\\?cbrt$/i, () => '∛']);
+      // sqrt waits for what comes next: sqrt{ starts a drawn root, sqrt( an inline one.
+      // (`\sqrt` works too.)
+      rules.push([/\\?(sqrt|cbrt)([{(])$/i, (m) => (m[1].toLowerCase() === 'sqrt' ? '√' : '∛') + m[2]]);
       // √(10) -> √10 when the inside is a single number or letter (keeps brackets for √(81+9))
       rules.push([/([√∛])\(([0-9a-zA-Z.]+)\)$/, (m) => m[1] + m[2]]);
-      // sqrt{x+1} -> √(x+1), sqrt{2} -> √2
-      rules.push([/([√∛])\{([^{}]*)\}$/, (m) => m[1] + (/^[\p{L}\p{N}.]+$/u.test(m[2]) ? m[2] : `(${m[2]})`)]);
+      // √{x+1} closed: drawn with a bar over it; as text it is √(x+1), or √2
+      rules.push([/([√∛])\{([^{}]*)\}$/, (m) => {
+        const text = m[1] + (/^[\p{L}\p{N}.]+$/u.test(m[2]) ? m[2] : `(${m[2]})`);
+        if (!m[2].trim()) return text;
+        return { text, stack: { type: 'block', tree: parseBlock(m[0]), pre: '', root: true } };
+      }]);
     }
 
     if (on.braces) {
@@ -471,7 +476,7 @@
     if (on.words) for (const [k, v] of Object.entries(WORDS)) add(k, v);
     if (on.greek) for (const [k, v] of Object.entries(GREEK)) add(k, v);
     if (on.sets) for (const [k, v] of Object.entries(SETS)) add(k, v);
-    if (on.roots) { add('sqrt', '√'); add('cbrt', '∛'); add('sqrt{…}', '√(…)', 'brackets'); }
+    if (on.roots) { add('sqrt{…}', '√', 'bar grows as you type'); add('cbrt{…}', '∛'); add('sqrt(…)', '√(…)', 'inline'); }
     if (on.braces) {
       add('abs{…}', '|…|', 'absolute value');
       add('\\frac{a}{b}', 'a⁄b', 'stacked');
@@ -499,9 +504,9 @@
     const rows = [];
     const add = (cat, type, get) => rows.push({ cat, type, get });
     for (const [from, to, label] of SYMBOLS) add('symbols', label || from, to);
-    add('roots', 'sqrt', '√ (4sqrt(10) → 4√10)');
-    add('roots', 'cbrt', '∛');
-    add('roots', 'sqrt{x+1}  sqrt{2}', '√(x+1)  √2');
+    add('roots', 'sqrt{x+1}', '√ with a bar over x+1, drawn on }');
+    add('roots', 'sqrt(81+9)  4sqrt(10)', '√(81+9)  4√10');
+    add('roots', 'cbrt{8}  cbrt(8)', '∛8');
     add('braces', 'abs{x-3}', '|x-3|');
     add('braces', '\\frac{a}{b}', 'a over b, stacked');
     add('braces', 'vec{v}  bar{x}  hat{x}  dot{x}', 'v⃗  x̄  x̂  ẋ');

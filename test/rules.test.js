@@ -39,7 +39,7 @@ const stackOf = (input, settings = ALL_ON, opts) => {
 
 const cases = [
   // original behaviour
-  ['sqrt', '√'], ['4sqrt(10)', '4√10'], ['sqrt(81+9)', '√(81+9)'], ['cbrt', '∛'],
+  ['sqrt', 'sqrt'], ['4sqrt(10)', '4√10'], ['sqrt(81+9)', '√(81+9)'], ['cbrt(8)', '∛8'],
   ['3//4 ', '¾ '], ['48//10 ', '⁴⁸⁄₁₀ '], ['2*3', '2×3'], ['8 div 2', '8 ÷ 2'],
   ['x^2', 'x²'], ['x^-12', 'x⁻¹²'], ['x_1', 'x₁'], ['x_12', 'x₁₂'],
   ['+-', '±'], ['>=', '≥'], ['<=', '≤'], ['!=', '≠'], ['->', '→'],
@@ -52,7 +52,7 @@ const cases = [
   ['omega ', 'ω '], ['Omega ', 'Ω '], ['theta)', 'θ)'], ['pi*2', 'π×2'],
   ['int ', '∫ '], ['partial ', '∂ '], ['x in RR ', 'x in ℝ '], ['NN ', 'ℕ '],
   ['\\in ', '∈ '], ['\\int ', '∫ '], ['\\delta ', 'δ '], ['\\Delta ', 'Δ '], ['\\sum ', '∑ '],
-  ['\\forall x', '∀ x'], ['\\subseteq ', '⊆ '], ['\\to ', '→ '], ['\\sqrt', '√'], ['\\pi ', 'π '],
+  ['\\forall x', '∀ x'], ['\\subseteq ', '⊆ '], ['\\to ', '→ '], ['\\sqrt{2}', '√2'], ['\\pi ', 'π '],
   ['\\R ', 'ℝ '], ['\\infty ', '∞ '],
   // words inside other words stay
   ['spin ', 'spin '], ['alphabet ', 'alphabet '], ['the sum of ', 'the sum of '],
@@ -73,7 +73,7 @@ test('categories can be switched off', () => {
   const s = { categories: { greek: false, symbols: false } };
   assert.strictEqual(type('alpha ', s), 'alpha ');
   assert.strictEqual(type('2*3', s), '2*3');
-  assert.strictEqual(type('sqrt', s), '√');
+  assert.strictEqual(type('sqrt(', s), '√(');
 });
 
 test('custom shortcuts', () => {
@@ -224,4 +224,17 @@ test('//{…} blocks are on by default, also for settings saved before', () => {
 test('a double backslash works like //', () => {
   assert.strictEqual(type('\\\\{67\\\\23}', null), '//{67//23}');
   assert.deepStrictEqual(MT.closedBlock(type('\\\\{67\\\\23}', null)), { start: 0, src: '67//23' });
+});
+
+test('sqrt waits for { or (; √{…} is drawn when } closes it', () => {
+  assert.strictEqual(type('sqrt', null), 'sqrt');
+  assert.strictEqual(type('sqrt{', null), '√{');
+  assert.strictEqual(type('sqrt{(3-k)^2+(4-t)', null), '√{(3-k)²+(4-t)');
+  const st = stackOf('sqrt{(3-k)^2+(4-t)}', null);
+  assert.strictEqual(st.type, 'block');
+  assert.strictEqual(st.root, true);
+  assert.strictEqual(st.tree.items[0].k, 'sqrt');
+  // as text (sticky notes, box labels) it falls back to √(…)
+  assert.strictEqual(type('sqrt{(3-k)^2+(4-t)}', null), '√((3-k)²+(4-t))');
+  assert.strictEqual(type('sqrt{2}', null), '√2');
 });

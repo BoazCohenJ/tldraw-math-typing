@@ -30,7 +30,8 @@ Chrome/Edge: `chrome://extensions` → Developer mode → Load unpacked → this
 ## Typing shortcuts
 | Type | Get |
 |---|---|
-| `sqrt`, `cbrt`, `sqrt{x+1}` | √, ∛, √(x+1) |
+| `sqrt{x+1}`, `cbrt{8}` | a drawn root: the bar grows over what you type, drawn when `}` closes it |
+| `sqrt(81+9)`, `4sqrt(10)` | √(81+9), 4√10 (inline) |
 | `*`, `**`, `div` | ×, ·, ÷ |
 | `x^2`, `x^-12`, `e^{2x}`, `x^(n+1)` | x², x⁻¹², e²ˣ, xⁿ⁺¹ |
 | `x_1`, `a_{n-1}` | x₁, aₙ₋₁ |

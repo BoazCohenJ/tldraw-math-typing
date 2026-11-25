@@ -160,6 +160,7 @@
     const info = caretInfo(el);
     if (info && /^\s*[/\\][a-z]/i.test(info.before)) return false;
     if (settings.categories.stacked) return true;
+    if (rep && rep.stack && rep.stack.root) return true;
     return !!(rep && rep.stack && rep.stack.deriv && settings.categories.deriv);
   };
 
@@ -323,6 +324,50 @@
     }, 30);
   };
 
+  // ---------------------------------------------------------------- live root bar
+  // While typing inside √{ … }, a bar is drawn over what you have typed so far.
+  let rootBar = null;
+  const hideRootBar = () => { if (rootBar) rootBar.style.display = 'none'; };
+  const openRootAt = (before) => {
+    let depth = 0;
+    for (let i = before.length - 1; i >= 0; i--) {
+      const c = before[i];
+      if (c === '}') depth++;
+      else if (c === '{') {
+        if (depth === 0) return i > 0 && (before[i - 1] === '√' || before[i - 1] === '∛') ? i : -1;
+        depth--;
+      }
+    }
+    return -1;
+  };
+  const updateRootBar = (el) => {
+    const info = caretInfo(el);
+    const at = info && info.node ? openRootAt(info.before) : -1;
+    if (at < 0) return hideRootBar();
+    const range = document.createRange();
+    range.setStart(info.node, at + 1);
+    range.setEnd(info.node, info.offset);
+    let rect = range.getBoundingClientRect();
+    if (!rect.width) {
+      const r2 = document.createRange();
+      r2.setStart(info.node, at);
+      r2.setEnd(info.node, at + 1);
+      const b = r2.getBoundingClientRect();
+      rect = { left: b.right, top: b.top, width: b.height * 0.5, height: b.height };
+    }
+    if (!rootBar) {
+      rootBar = document.createElement('div');
+      Object.assign(rootBar.style, { position: 'fixed', zIndex: '2147483646', pointerEvents: 'none', height: '0' });
+      document.body.appendChild(rootBar);
+    }
+    const color = getComputedStyle(el).color || '#1d1d1d';
+    const thick = Math.max(1.5, rect.height * 0.07);
+    Object.assign(rootBar.style, {
+      display: 'block', left: `${rect.left}px`, top: `${rect.top + rect.height * 0.08}px`,
+      width: `${rect.width + 2}px`, borderTop: `${thick}px solid ${color}`,
+    });
+  };
+
   // ---------------------------------------------------------------- hints
   // A small list under the caret: what the word you are typing can turn into.
   // Tab takes the highlighted one, ↑/↓ move, Esc closes it.
@@ -440,6 +485,7 @@
     if (h.key.startsWith('prod_')) return '∏_';
     if (h.key.startsWith('lim_')) return 'lim_';
     if (h.note === 'stacked') return h.key;
+    if (/^(sqrt|cbrt)[{(]…[})]$/.test(h.key)) return (h.key.startsWith('sqrt') ? '√' : '∛') + h.key[4];
     if (h.note === 'then Enter') return h.key + ' ';
     if (h.key === '/draw') return '/draw';
     return h.out;
@@ -463,12 +509,13 @@
     const el = e.target;
     if (!settings.enabled || !isEditable(el)) return hideHints();
     if (e.inputType !== 'insertText') {
-      setTimeout(() => updateHints(el), 0);
+      setTimeout(() => { updateHints(el); updateRootBar(el); }, 0);
       return;
     }
     // Let the editor finish handling the keystroke first.
     setTimeout(() => {
       convert(el, MT.findReplacement);
+      updateRootBar(el);
       if (e.data === '}' && drawBlock(el)) return;
       if (e.data === ' ' && drawLine(el, false)) return;
       updateHints(el);
@@ -557,6 +604,7 @@
   // Clicking away from the text box: convert a trailing word too (inline only).
   document.addEventListener('focusout', (e) => {
     hideHints();
+    hideRootBar();
     if (!settings.enabled || applying || !isEditable(e.target)) return;
     last = null;
     const info = caretInfo(e.target);
