@@ -29,6 +29,7 @@
     { id: 'roots', label: 'Roots (sqrt, cbrt)' },
     { id: 'scripts', label: 'Exponents and indices (x^2, e^{2x}, x_1)' },
     { id: 'draw', label: '/draw at the end of a line draws it as an equation' },
+    { id: 'deriv', label: 'Draw d/dx, dy/dx, ∂/∂x stacked as you type the space after' },
     { id: 'fractions', label: 'Fractions as you type (3//4 → ¾)', off: true },
     { id: 'stacked', label: 'Draw fractions and bounds as you type, no /draw needed', off: true },
     { id: 'blocks', label: 'Draw //{…} as soon as } closes it (no /draw needed)' },
@@ -206,9 +207,13 @@
         const inline = subs != null && sups != null ? pre + op + subs + sups + m[5] : m[0];
         return { text: inline, stack: { type: 'bigop', op, lower, upper, pre } };
       }]);
-      // d/dx, dy/dx, d²y/dx², ∂/∂x (or ∂/∂ x) followed by a space or symbol
+    }
+
+    if (stacked || on.deriv) {
+      // d/dx, dy/dx, d²y/dx², ∂/∂x (or ∂/∂ x) followed by a space or symbol: drawn stacked
       rules.push([/(^|[^\p{L}\p{N}])([d∂][²³]?[a-zA-Z]?)\/([d∂] ?[a-zA-Z][²³]?)([^\p{L}\p{N}])$/u, (m) => ({
-        text: m[0], stack: { type: 'fraction', num: m[2], den: m[3].replace(' ', ''), after: m[4].trim(), pre: m[1] },
+        text: m[0],
+        stack: { type: 'fraction', num: m[2], den: m[3].replace(' ', ''), after: m[4].trim(), pre: m[1], deriv: true },
       })]);
     }
 
@@ -216,6 +221,9 @@
       // sum_ / prod_ -> ∑_ / ∏_ (plain `sum` stays a word otherwise)
       rules.push([/(^|[^a-zA-Z\\])(sum|prod)([_^])$/, (m) => m[1] + (m[2] === 'sum' ? '∑' : '∏') + m[3]]);
     }
+
+    // \\ is easy to type for // (fractions, //{…} blocks): treat it the same.
+    rules.push([/\\\\$/, () => '//']);
 
     if (on.latex) {
       const names = Object.keys(LATEX).sort((a, b) => b.length - a.length).join('|');
@@ -497,6 +505,7 @@
     add('braces', 'abs{x-3}', '|x-3|');
     add('braces', '\\frac{a}{b}', 'a over b, stacked');
     add('braces', 'vec{v}  bar{x}  hat{x}  dot{x}', 'v⃗  x̄  x̂  ẋ');
+    add('deriv', 'd/dx  dy/dx  d²y/dx²  ∂/∂x + space', 'drawn stacked at once');
     add('draw', 'y = x//{x+3} + 4 /draw', 'the line as an equation');
     add('draw', '{a+b}//{c//d} /draw', 'fractions can nest; {…} groups');
     add('draw', 'int_0^1 x dx /draw', '∫ with 0 below, 1 above');

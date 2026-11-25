@@ -150,7 +150,15 @@
   const canDraw = (el) =>
     document.documentElement.dataset.mathtypingPage === '1' &&
     el.closest('[data-shape-type]')?.dataset.shapeType === 'text';
-  const canStack = (el) => settings.categories.stacked && canDraw(el);
+  // d/dx is drawn as you type (its own switch); other fractions only with "draw as you type".
+  // Never inside a /command line, which is read as text.
+  const canStack = (el, rep) => {
+    if (!canDraw(el)) return false;
+    const info = caretInfo(el);
+    if (info && /^\s*[/\\][a-z]/i.test(info.before)) return false;
+    if (settings.categories.stacked) return true;
+    return !!(rep && rep.stack && rep.stack.deriv && settings.categories.deriv);
+  };
 
   // Sends a drawing request to page.js. Returns whether it drew it (the reply is synchronous).
   const askPage = (req) => {
@@ -207,7 +215,7 @@
       // Inside an open //{ … } block, fractions wait for the block to close.
       if (inBlock(info.before.slice(0, -1)) &&
           (rep.stack || info.before.slice(info.before.length - rep.length).includes('//'))) break;
-      if (rep.stack && canStack(el)) {
+      if (rep.stack && canStack(el, rep)) {
         stack(el, info, rep, finish);
         return;
       }
@@ -521,7 +529,7 @@
         return;
       }
       const rep = info && MT.findPendingWord(rules, info.before);
-      if (rep && rep.stack && canStack(el)) {
+      if (rep && rep.stack && canStack(el, rep)) {
         // A stacked fraction/bound at the end: draw it and stop editing.
         e.preventDefault();
         e.stopPropagation();

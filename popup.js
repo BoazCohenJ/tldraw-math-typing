@@ -9,7 +9,7 @@
   const save = () => ext.storage.local.set({ [STORAGE_KEY]: settings });
   const catLabel = Object.fromEntries(MT.CATEGORIES.map((c) => [c.id, c.label]));
   const SHORT = {
-    symbols: 'Operators', roots: 'Roots', scripts: 'Exponents', fractions: 'Fractions', draw: '/draw',
+    symbols: 'Operators', roots: 'Roots', deriv: 'd/dx', scripts: 'Exponents', fractions: 'Fractions', draw: '/draw',
     stacked: 'Stacked', blocks: 'Blocks', braces: 'Braces', greek: 'Greek', words: 'Words', sets: 'Sets',
     latex: 'LaTeX',
   };

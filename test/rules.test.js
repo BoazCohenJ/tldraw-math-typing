@@ -114,7 +114,7 @@ test('stacked fractions', () => {
 });
 
 test('derivatives', () => {
-  assert.deepStrictEqual(stackOf('d/dx '), { type: 'fraction', num: 'd', den: 'dx', after: '', pre: '' });
+  assert.deepStrictEqual(stackOf('d/dx '), { type: 'fraction', num: 'd', den: 'dx', after: '', pre: '', deriv: true });
   assert.strictEqual(stackOf('dy/dx=').num, 'dy');
   assert.strictEqual(stackOf('d^2y/dx^2 ').num, 'd²y');
   assert.strictEqual(stackOf('d^2y/dx^2 ').den, 'dx²');
@@ -183,7 +183,7 @@ test('defaults: nothing is drawn or folded while typing; /draw does it', () => {
   const D = null; // default settings
   assert.strictEqual(type('3//4 ', D), '3//4 ');
   assert.strictEqual(stackOf('3//4 ', D), undefined);
-  assert.strictEqual(stackOf('d/dx ', D), undefined);
+  assert.strictEqual(stackOf('d/dx ', D).den, 'dx'); // d/dx is the one exception: drawn at once
   assert.strictEqual(type('int_0^1 ', D), '∫_0^1 ');
   assert.strictEqual(type('sum_{i=1}^n ', D), '∑_{i=1}^n ');
   assert.strictEqual(type('x^2 + alpha ', D), 'x² + α ');
@@ -219,4 +219,9 @@ test('//{…} blocks are on by default, also for settings saved before', () => {
   assert.strictEqual(MT.normalizeSettings({ v: 2, categories: { blocks: false } }).categories.blocks, true);
   assert.strictEqual(MT.normalizeSettings({ v: 3, categories: { blocks: false } }).categories.blocks, false);
   assert.deepStrictEqual(MT.closedBlock('//{3//{x+2}}'), { start: 0, src: '3//{x+2}' });
+});
+
+test('a double backslash works like //', () => {
+  assert.strictEqual(type('\\\\{67\\\\23}', null), '//{67//23}');
+  assert.deepStrictEqual(MT.closedBlock(type('\\\\{67\\\\23}', null)), { start: 0, src: '67//23' });
 });
