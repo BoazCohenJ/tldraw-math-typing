@@ -24,7 +24,12 @@
   const subRe = new RegExp(`[${SUB}]+`, 'g');
 
   const normalize = (text) => {
-    let s = String(text);
+    // \u200B: the invisible character drawn equations leave at the start of a text box
+    let s = String(text).replace(/\u200B/g, '');
+    // a//b is a fraction (the drawing syntax), which in a formula is just a/b
+    s = s.replace(/\/\//g, '/');
+    // 90deg -> 90°
+    s = s.replace(/(\d)\s*deg\b/g, '$1°');
     // ⁴⁸⁄₁₀ -> (48)/(10)
     s = s.replace(new RegExp(`([${SUP}]+)⁄([${SUB}]+)`, 'g'),
       (m, a, b) => `((${fromTable(a, SUP, SUP_ASCII)})/(${fromTable(b, SUB, SUB_ASCII)}))`);
@@ -74,7 +79,7 @@
         }
         continue;
       }
-      if ('+-*/^(),!|=<>'.includes(c)) {
+      if ('+-*/^(),!|=<>°'.includes(c)) {
         if ((c === '<' || c === '>') && s[i + 1] === '=') { out.push({ k: 'op', v: c + '=' }); i += 2; continue; }
         if (c === '*' && s[i + 1] === '*') { out.push({ k: 'op', v: '^' }); i += 2; continue; }
         out.push({ k: 'op', v: c });
@@ -123,6 +128,9 @@
           const o = toks[p++].v;
           a = { t: 'op', o, a, b: parseUnary() };
         } else if (startsFactor()) {
+          if (peek().k === 'num' && toks[p - 1] && toks[p - 1].k === 'num') {
+            throw new Error(`missing an operator between ${toks[p - 1].v} and ${peek().v}`);
+          }
           a = { t: 'op', o: '*', a, b: parsePower() };
         } else break;
       }
@@ -144,7 +152,10 @@
     };
     const parsePostfix = () => {
       let a = parsePrimary();
-      while (isOp('!')) { p++; a = { t: 'fn', n: 'fact', args: [a] }; }
+      while (isOp('!') || isOp('°')) {
+        const o = toks[p++].v;
+        a = { t: 'fn', n: o === '!' ? 'fact' : 'deg', args: [a] };
+      }
       return a;
     };
     const parsePrimary = () => {
@@ -154,11 +165,24 @@
       if (t.k === 'id') { p++; return { t: 'var', n: t.v }; }
       if (t.k === 'fn') {
         p++;
-        if (isOp('^') && toks[p + 1] && toks[p + 1].k === 'num') {
-          // sin^2(x) = (sin x)^2
+        if (isOp('^')) {
+          // sin^2(x) and sin²(x) are (sin x)^2; sin^-1(x) is arcsin(x)
           p++;
-          const pw = toks[p++].v;
-          return { t: 'op', o: '^', a: { t: 'fn', n: t.v, args: [parseFnArg()] }, b: { t: 'num', v: pw } };
+          let pw;
+          if (isOp('(')) {
+            p++;
+            pw = parseExpr();
+            eat(')');
+          } else if (isOp('-')) {
+            p++;
+            pw = { t: 'neg', a: parsePrimary() };
+          } else {
+            pw = parsePrimary();
+          }
+          const v = fold(pw);
+          const INV = { sin: 'asin', cos: 'acos', tan: 'atan' };
+          if (v.t === 'num' && v.v === -1 && INV[t.v]) return { t: 'fn', n: INV[t.v], args: [parseFnArg()] };
+          return { t: 'op', o: '^', a: { t: 'fn', n: t.v, args: [parseFnArg()] }, b: pw };
         }
         return { t: 'fn', n: t.v, args: [parseFnArg()] };
       }
@@ -199,9 +223,19 @@
   // ---------------------------------------------------------------- evaluation
   const fact = (n) => {
     if (n < 0 || n !== Math.floor(n)) return NaN;
+    if (n > 170) return Infinity; // beyond doubles anyway; also stops a frozen tab on 10^9!
     let r = 1;
     for (let i = 2; i <= n; i++) r *= i;
     return r;
+  };
+  // Real powers of negative numbers: (-8)^(1/3) = -2, (-8)^(2/3) = 4, (-2)^0.5 undefined.
+  const power = (a, b) => {
+    if (a >= 0 || Number.isInteger(b)) return Math.pow(a, b);
+    for (let q = 3; q <= 99; q += 2) {
+      const pn = b * q;
+      if (Math.abs(pn - Math.round(pn)) < 1e-9) return (Math.round(pn) % 2 ? -1 : 1) * Math.pow(-a, b);
+    }
+    return NaN;
   };
   const FN = {
     sin: Math.sin, cos: Math.cos, tan: Math.tan, sec: (x) => 1 / Math.cos(x), csc: (x) => 1 / Math.sin(x),
@@ -209,6 +243,7 @@
     arccos: Math.acos, arctan: Math.atan, sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh,
     ln: Math.log, log: Math.log10, exp: Math.exp, sqrt: Math.sqrt, cbrt: Math.cbrt, abs: Math.abs,
     floor: Math.floor, ceil: Math.ceil, round: Math.round, sign: Math.sign, fact,
+    deg: (x) => (x * Math.PI) / 180,
     // nerdamer spellings in its results
     log10: Math.log10,
   };
@@ -235,7 +270,7 @@
           case '-': return a - b;
           case '*': return a * b;
           case '/': return a / b;
-          case '^': return a < 0 && Math.abs(b) < 1 && Math.round(1 / b) % 2 ? -Math.pow(-a, b) : Math.pow(a, b);
+          case '^': return power(a, b);
           default: throw new Error(`unknown operator ${n.o}`);
         }
       }
@@ -264,7 +299,11 @@
       case 'num': return String(n.v);
       case 'var': return n.n === 'inf' ? 'Infinity' : n.n;
       case 'neg': return `(-${toNerd(n.a)})`;
-      case 'fn': return n.n === 'fact' ? `factorial(${toNerd(n.args[0])})` : `${NERD_FN[n.n] || n.n}(${n.args.map(toNerd).join(',')})`;
+      case 'fn':
+        if (n.n === 'fact') return `factorial(${toNerd(n.args[0])})`;
+        if (n.n === 'log') return `(log(${toNerd(n.args[0])})/log(10))`;
+        if (n.n === 'deg') return `((${toNerd(n.args[0])})*pi/180)`;
+        return `${NERD_FN[n.n] || n.n}(${n.args.map(toNerd).join(',')})`;
       case 'op': return `(${toNerd(n.a)})${n.o}(${toNerd(n.b)})`;
       default: return '';
     }
@@ -327,7 +366,8 @@
           const sym = n.n === 'sqrt' ? '√' : '∛';
           return prec(a) === 5 ? sym + pretty(a) : `${sym}(${pretty(a)})`;
         }
-        const name = { log: 'ln', log10: 'log', asin: 'arcsin', acos: 'arccos', atan: 'arctan' }[n.n] || n.n;
+        if (n.n === 'deg') return `${wrap(a, 5)}°`;
+        const name = { log10: 'log', asin: 'arcsin', acos: 'arccos', atan: 'arctan' }[n.n] || n.n;
         return `${name}(${n.args.map(pretty).join(', ')})`;
       }
       case 'op': {
@@ -384,21 +424,35 @@
       } else terms.push({ x, neg });
     };
     walk(n, false);
-    const vars = freeVars(n);
-    if (vars.size !== 1) return null;
-    const [v] = vars;
-    const degs = terms.map((t) => degree(t.x, v));
-    if (degs.some((d) => d == null)) return null;
-    const order = terms.map((t, i) => ({ ...t, d: degs[i], i })).sort((a, b) => b.d - a.d || a.i - b.i);
-    if (order.every((t, i) => t.i === i)) return null;
     const signed = (t) => (t.neg ? negate(t.x) : t.x);
-    let acc = signed(order[0]);
-    for (const t of order.slice(1)) acc = { t: 'op', o: '+', a: acc, b: signed(t) };
     const mark = (x) => {
       if (x.t === 'op' && (x.o === '+' || x.o === '-')) { x.sorted = true; mark(x.a); }
       return x;
     };
-    return mark(acc);
+    const build = (list) => {
+      let acc = signed(list[0]);
+      for (const t of list.slice(1)) acc = { t: 'op', o: '+', a: acc, b: signed(t) };
+      return mark(acc);
+    };
+    const isNegative = (t) => {
+      const x = signed(t);
+      return x.t === 'neg' || (x.t === 'num' && x.v < 0) ||
+        (x.t === 'op' && x.o === '*' && factors(x).c * (factors(x).neg ? -1 : 1) < 0);
+    };
+    const leadPositive = () => {
+      if (!isNegative(terms[0])) return null;
+      const k = terms.findIndex((t) => !isNegative(t));
+      if (k < 0) return null;
+      return build([terms[k], ...terms.filter((_, i) => i !== k)]);
+    };
+    const vars = freeVars(n);
+    if (vars.size !== 1) return leadPositive();
+    const [v] = vars;
+    const degs = terms.map((t) => degree(t.x, v));
+    if (degs.some((d) => d == null)) return leadPositive();
+    const order = terms.map((t, i) => ({ ...t, d: degs[i], i })).sort((a, b) => b.d - a.d || a.i - b.i);
+    if (order.every((t, i) => t.i === i)) return null;
+    return build(order);
   };
   const expVal = (n) => (n.b.t === 'num' ? n.b.v : n.b.t === 'op' && n.b.o === '/' && isNum(n.b.a) && isNum(n.b.b) ? n.b.a.v / n.b.b.v : null);
   // x^(1/2) -> √x, x^(1/3) -> ∛x
@@ -441,6 +495,16 @@
   };
   // 3*x^2*sin(x) -> 3x²·sin(x) ; (1/2)*x -> x/2
   const prettyProduct = (n) => {
+    // Two numbers multiplied are shown as typed (3×4), not worked out (12).
+    let nums = 0;
+    const count = (x) => {
+      if (x.t === 'op' && x.o === '*') { count(x.a); count(x.b); } else if (x.t === 'neg') count(x.a); else if (x.t === 'num') nums++;
+    };
+    count(n);
+    if (nums > 1) {
+      const side = (x) => (prec(x) < 2 ? `(${pretty(x)})` : pretty(x));
+      return `${side(n.a)}×${side(n.b)}`;
+    }
     const f = factors(n);
     let c = f.c * (f.neg ? -1 : 1);
     // numeric fraction factors such as (1/2) inside the product
@@ -481,7 +545,8 @@
     if (!denParts.length) return sign + numPart;
     const needsWrap = (top.length > 1 || (top.length === 1 && prec(top[0]) < 2)) && coef;
     let denStr = denParts.join('');
-    if (bottom.length > 1 || (bottom.length === 1 && prec(bottom[0]) < 4 && !/^[√∛]/.test(pretty(bottom[0])))) denStr = `(${denStr})`;
+    const wrapped = /^\(.*\)$/.test(denStr) && !/\)\s*[^)]*\(/.test(denStr.slice(1, -1));
+    if (!wrapped && (bottom.length > 1 || (bottom.length === 1 && prec(bottom[0]) < 4 && !/^[√∛]/.test(pretty(bottom[0]))))) denStr = `(${denStr})`;
     return sign + (needsWrap ? `(${numPart})` : numPart) + '/' + denStr;
   };
 
@@ -566,16 +631,52 @@
     return m ? { body: m[1], from: m[2], to: m[3] } : { body: s };
   };
 
+  // Sample points for checking answers numerically.
+  const SAMPLES = [0.37, 0.81, 1.3, 1.9, 2.7, -0.55, -1.6, 3.4];
+  const finite = (f) => { try { const v = f(); return Number.isFinite(v) ? v : null; } catch (_) { return null; } };
+  // Do two expressions agree on enough sample points? (Variables other than v get fixed values.)
+  const agree = (fa, fb, tol = 1e-6) => {
+    let ok = 0;
+    for (const x of SAMPLES) {
+      const a = finite(() => fa(x));
+      const b = finite(() => fb(x));
+      if (a == null || b == null) continue;
+      if (Math.abs(a - b) > tol * (1 + Math.abs(a) + Math.abs(b))) return false;
+      ok++;
+    }
+    return ok >= 3;
+  };
+  const envFor = (ast, v, x) => {
+    const env = { [v]: x };
+    let k = 0;
+    for (const name of freeVars(ast)) if (name !== v) env[name] = 0.7 + 0.3 * k++;
+    return env;
+  };
+  // Refuses inputs nerdamer would take minutes (or forever) on.
+  const tooBig = (ast) => {
+    let big = false;
+    const walk = (n) => {
+      if (!n || big) return;
+      if (n.t === 'op' && n.o === '^' && n.b.t === 'num' && Math.abs(n.b.v) > 30) big = true;
+      if (n.t === 'num' && Math.abs(n.v) > 1e12) big = true;
+      if (n.t === 'fn' && n.n === 'fact') big = true;
+      walk(n.a); walk(n.b); (n.args || []).forEach(walk);
+    };
+    walk(ast);
+    return big;
+  };
+  const CAS_FAILED = "couldn't work that out reliably";
+
   const calc = (expr) => {
     const ast = parse(expr);
     const vars = freeVars(ast);
     if (vars.size) return simplifyCmd(expr, 'simplify');
     const v = evaluate(ast);
     let exact = null;
-    if (nerd()) {
+    if (nerd() && Number.isFinite(v) && Math.abs(v) < 1e15 && !tooBig(ast)) {
       try {
         const s = String(nerd()(toNerd(ast)));
-        if (s.length < 30 && /^[-\d/*()^a-z+ ]+$/i.test(s) && /\/|sqrt|pi/.test(s) && !/factorial|\d\.\d/.test(s)) {
+        if (s.length < 30 && /^[-\d/*()^a-z+ ]+$/i.test(s) && /\/|sqrt|pi/.test(s) && !/factorial|\d\.\d|\(-/.test(s)) {
           exact = pretty(fromNerd(s));
           if (exact === pretty(ast)) exact = null;
         }
@@ -589,7 +690,16 @@
     const m = rest.match(/^(.*?)(?:\s+(?:wrt|by|for|d)\s+([a-zA-Zα-ω]))?\s*$/i);
     const ast = parse(m[1]);
     const v = m[2] || mainVar(ast);
+    if (tooBig(ast)) throw new Error('that is too big to differentiate here');
     const out = need().diff(toNerd(ast), v).toString();
+    const d = fromNerd(out);
+    const h = 1e-5;
+    const ok = agree(
+      (x) => evaluate(d, envFor(ast, v, x)),
+      (x) => (evaluate(ast, envFor(ast, v, x + h)) - evaluate(ast, envFor(ast, v, x - h))) / (2 * h),
+      1e-4,
+    );
+    if (!ok) throw new Error(CAS_FAILED);
     return `d/d${v} (${pretty(ast)}) = ${tidy(out)}`;
   };
 
@@ -602,16 +712,36 @@
     const ast = parse(body);
     v = v || mainVar(ast);
     let anti = null;
-    try {
-      const s = need()(`integrate(${toNerd(ast)}, ${v})`).toString();
-      if (!unevaluated(s, 'integrate')) anti = s;
-    } catch (_) { /* no closed form */ }
+    if (!tooBig(ast)) {
+      try {
+        const s = need()(`integrate(${toNerd(ast)}, ${v})`).toString();
+        if (!unevaluated(s, 'integrate')) anti = s;
+      } catch (_) { /* no closed form */ }
+    }
+    if (anti) {
+      // F' must equal the integrand, or the formula is wrong (nerdamer sometimes is)
+      const F = (() => { try { return fromNerd(anti); } catch (_) { return null; } })();
+      const h = 1e-5;
+      if (!F || !agree(
+        (x) => (evaluate(F, envFor(ast, v, x + h)) - evaluate(F, envFor(ast, v, x - h))) / (2 * h),
+        (x) => evaluate(ast, envFor(ast, v, x)),
+        1e-4,
+      )) anti = null;
+    }
     if (r.from === undefined) {
       if (!anti) throw new Error("couldn't find a formula for that integral");
       return `∫ ${pretty(ast)} d${v} = ${tidy(anti)} + C`;
     }
     const a = evaluate(parse(r.from));
     const b = evaluate(parse(r.to));
+    // A pole or a gap between the bounds: the integral doesn't have a finite value.
+    for (let i = 0; i <= 600; i++) {
+      const x = a + ((b - a) * i) / 600;
+      const y = finite(() => evaluate(ast, envFor(ast, v, x)));
+      if (y == null || Math.abs(y) > 1e9) {
+        throw new Error(`${pretty(ast)} is not finite at ${v} = ${fmtNum(Number(x.toPrecision(4)))}, so the integral has no value`);
+      }
+    }
     let value = null;
     if (anti) {
       try {
@@ -627,6 +757,7 @@
   const solveCmd = (rest) => {
     const m = rest.match(/^(.*?)(?:\s+for\s+([a-zA-Zα-ω]))?\s*$/i);
     let eq = m[1];
+    if (eq.split('=').length > 2) throw new Error('use one = sign, e.g. /solve x^2 = 4');
     if (!eq.includes('=')) eq += '=0';
     const [lhs, rhs] = eq.split('=');
     const la = parse(lhs);
@@ -670,18 +801,24 @@
         px = x;
         py = y;
       }
-      sols = roots.map(fmtNum);
+      roots.sort((p1, p2) => Math.abs(p1) - Math.abs(p2));
+      sols = roots.slice(0, 6).map(fmtNum);
+      if (roots.length > 6) sols.push('…');
     }
     const left = `${pretty(la)} = ${pretty(ra)}`;
     if (!sols.length) return `${left}  ⇒  no real solution`;
-    return `${left}  ⇒  ${sols.map((s) => `${v} = ${s}`).join(' or ')}`;
+    return `${left}  ⇒  ${sols.map((s) => (s === '…' ? s : `${v} = ${s}`)).join(' or ')}`;
   };
 
   const simplifyCmd = (expr, op) => {
     const ast = parse(expr);
     const fn = { simplify: 'simplify', factor: 'factor', factorise: 'factor', factorize: 'factor', expand: 'expand' }[op];
+    if (tooBig(ast)) throw new Error(`that is too big to ${fn} here`);
     const out = need()(`${fn}(${toNerd(ast)})`).toString();
-    return `${pretty(ast)} = ${pretty(fromNerd(out))}`;
+    const res = fromNerd(out);
+    const v = mainVar(ast);
+    if (!agree((x) => evaluate(res, envFor(ast, v, x)), (x) => evaluate(ast, envFor(ast, v, x)))) throw new Error(CAS_FAILED);
+    return `${pretty(ast)} = ${pretty(res)}`;
   };
 
   // ---------------------------------------------------------------- figures
@@ -869,6 +1006,10 @@
 
     let x0 = r.from !== undefined ? evaluate(parse(r.from)) : null;
     let x1 = r.to !== undefined ? evaluate(parse(r.to)) : null;
+    if (x0 != null && x1 != null) {
+      if (!Number.isFinite(x0) || !Number.isFinite(x1) || x0 === x1) throw new Error('the range needs two different numbers');
+      if (x0 > x1) [x0, x1] = [x1, x0];
+    }
     let y0;
     let y1;
     const curves = [];
@@ -1010,6 +1151,7 @@
   const shapeCmd = (rest) => {
     const s = rest.trim().toLowerCase().replace(/,/g, ' ');
     const nums = (s.match(/-?\d+(\.\d+)?/g) || []).map(Number);
+    if (!/^angle/.test(s) && nums.some((v) => !(v > 0))) throw new Error('sizes must be more than 0');
     const items = [];
     const poly = (pts) => items.push({ kind: 'poly', pts, closed: true });
     const label = (x, y, text, opts = {}) => items.push({ kind: 'text', x, y, text, scale: 0.55, ...opts });
@@ -1060,7 +1202,7 @@
     const angleAt = (v, a, b) => {
       const u = [a[0] - v[0], a[1] - v[1]];
       const w = [b[0] - v[0], b[1] - v[1]];
-      return Math.acos((u[0] * w[0] + u[1] * w[1]) / (Math.hypot(...u) * Math.hypot(...w)));
+      return Math.acos(Math.max(-1, Math.min(1, (u[0] * w[0] + u[1] * w[1]) / (Math.hypot(...u) * Math.hypot(...w)))));
     };
     const triangle = (a, b, c, opts = {}) => {
       if (a + b <= c || a + c <= b || b + c <= a) throw new Error(`${fmt(a)}, ${fmt(b)}, ${fmt(c)} can't make a triangle`);
@@ -1171,7 +1313,7 @@
   // The graph of an equation in x and y ("y = 3x^2 + 2x", "x^2+y^2=25", "1//x = y"), or null.
   // Fractions typed as // and groups typed as {…} are read as / and (…).
   const asPlot = (src) => {
-    const text = String(src).replace(/\/\//g, '/').trim();
+    const text = String(src).replace(/\u200B/g, '').replace(/\/\//g, '/').trim();
     const sides = text.split('=');
     if (sides.length !== 2) return null;
     let vars;
@@ -1195,7 +1337,7 @@
   // { equation } to lay out as a drawn equation, or null when the line is not a command.
   // Throws with a readable message on errors.
   const runCommand = (line, enabled = { cas: true, plot: true, shapes: true }) => {
-    const m = String(line).match(COMMANDS);
+    const m = String(line).replace(/\u200B/g, '').match(COMMANDS);
     if (!m) return null;
     const cmd = m[1].toLowerCase();
     let rest = m[2].trim();
@@ -1207,7 +1349,8 @@
     if (cmd === 'draw' && rest && !SHAPE_WORD.test(rest) && /[=/^_{}()+\-*×·0-9²³√∫∑]/.test(rest)) {
       // /draw x^2+y^2=25 draws the graph; anything else is an equation to lay out
       const plot = enabled.plot ? asPlot(rest) : null;
-      return plot || { equation: rest };
+      if (plot) return plot;
+      return enabled.draw === false ? null : { equation: rest };
     }
     const kind = cmd === 'plot' || cmd === 'graph' ? 'plot' : cmd === 'draw' || cmd === 'shape' ? 'shapes' : 'cas';
     if (!enabled[kind]) return null;

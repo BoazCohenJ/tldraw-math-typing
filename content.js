@@ -2,15 +2,30 @@
 // Alt+M turns it on/off. Settings live in extension storage and are edited from the toolbar popup.
 (() => {
   'use strict';
-  // Runs once per tab, even when background.js also puts it into a tab that was already open.
-  if (globalThis.__mathTypingContent) return;
-  globalThis.__mathTypingContent = true;
 
   const MT = globalThis.MathTyping;
   const TOOLS = globalThis.MathTools;
   const FONTS = globalThis.MathTypingFonts;
   const ext = globalThis.browser ?? globalThis.chrome;
   const STORAGE_KEY = 'settings';
+  let VERSION = '0';
+  try { VERSION = ext.runtime.getManifest().version; } catch (_) { /* tests */ }
+
+  // ---------------------------------------------------------------- one copy per tab
+  // background.js also puts this script into tabs that were open before an install or update.
+  // The newest copy wins: it tells older ones to stop and removes what they left on the page.
+  if (globalThis.__mathTypingContent === VERSION) return;
+  globalThis.__mathTypingContent = VERSION;
+  const INSTANCE = `${VERSION}:${Math.random().toString(36).slice(2)}`;
+  let dead = false;
+  document.addEventListener('mathtyping:teardown', (e) => {
+    if (e.detail === INSTANCE) return;
+    dead = true;
+    hideHints();
+    hideRootBar();
+  });
+  document.dispatchEvent(new CustomEvent('mathtyping:teardown', { detail: INSTANCE }));
+  document.querySelectorAll('[data-mathtyping-ui]').forEach((n) => n.remove());
 
   let settings = MT.normalizeSettings(null);
   let rules = MT.buildRules(settings);
@@ -22,6 +37,7 @@
     hintList = MT.hintEntries(settings);
     applyFonts();
     if (!settings.enabled || !settings.hints) hideHints();
+    if (!settings.enabled) hideRootBar();
   };
 
   const loadSettings = async () => {
@@ -35,7 +51,14 @@
   };
   try {
     ext.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && changes[STORAGE_KEY]) applySettings(changes[STORAGE_KEY].newValue);
+      if (!dead && area === 'local' && changes[STORAGE_KEY]) applySettings(changes[STORAGE_KEY].newValue);
+    });
+  } catch (_) {}
+  // The popup asks whether this tab is running (for its status line).
+  try {
+    ext.runtime.onMessage.addListener((msg) => {
+      if (dead || !msg || msg.type !== 'mathtyping:ping') return undefined;
+      return Promise.resolve({ ok: true, version: VERSION, enabled: settings.enabled });
     });
   } catch (_) {}
 
@@ -46,6 +69,11 @@
   let fontsLoaded = null;
   const loadFonts = () => {
     if (fontsLoaded || !FONTS) return fontsLoaded;
+    // An earlier copy of the add-on may have added them already.
+    if ([...document.fonts].some((f) => f.family.replace(/"/g, '').startsWith('mathtyping_'))) {
+      fontsLoaded = Promise.resolve();
+      return fontsLoaded;
+    }
     fontsLoaded = (async () => {
       // The subsets are inlined in fonts.js: Firefox won't let a content script fetch its own files.
       const files = {};
@@ -85,7 +113,7 @@
   let typedSinceMove = false;
   window.addEventListener('keydown', () => { typedSinceMove = true; }, true);
   window.addEventListener('pointermove', () => {
-    if (!typedSinceMove) return;
+    if (dead || !typedSinceMove) return;
     typedSinceMove = false;
     if (!settings.cursorKick) return;
     const rootEl = document.documentElement;
@@ -117,6 +145,7 @@
     }
     const sel = window.getSelection();
     if (!sel || !sel.isCollapsed || !sel.anchorNode) return null;
+    if (el && !el.contains(sel.anchorNode)) return null;
     let node = sel.anchorNode;
     let offset = sel.anchorOffset;
     if (node.nodeType !== Node.TEXT_NODE) {
@@ -127,6 +156,8 @@
     }
     return { before: node.data.slice(0, offset), sel, node, offset };
   };
+  // The line without the invisible zero-width space a drawn equation leaves at its start.
+  const visible = (s) => s.replace(/​/g, '');
 
   // Select the last `length` characters before the caret and type `text` over them.
   const replaceBeforeCaret = (info, length, text) => {
@@ -147,58 +178,111 @@
     insertText(text);
   };
 
-  // ---------------------------------------------------------------- stacked shapes
+  // ---------------------------------------------------------------- drawing (page.js)
   // A plain tldraw text shape can hand a fraction or bounds to page.js, which draws them
   // as real shapes. Anything else (a label inside a box, a note) gets the inline version.
   const canDraw = (el) =>
     document.documentElement.dataset.mathtypingPage === '1' &&
     el.closest('[data-shape-type]')?.dataset.shapeType === 'text';
-  // d/dx is drawn as you type (its own switch); other fractions only with "draw as you type".
-  // Never inside a /command line, which is read as text.
+  // d/dx, roots and {…} bounds are drawn as you type (their own switches); other fractions only
+  // with "draw as you type". Never inside a /command line, which is read as text.
   const canStack = (el, rep) => {
     if (!canDraw(el)) return false;
     const info = caretInfo(el);
-    if (info && /^\s*[/\\][a-z]/i.test(info.before)) return false;
+    if (info && /^\s*[/\\][a-z]/i.test(visible(info.before))) return false;
     if (settings.categories.stacked) return true;
-    if (rep && rep.stack && rep.stack.root) return true;
-    return !!(rep && rep.stack && rep.stack.deriv && settings.categories.deriv);
-  };
-
-  // Sends a drawing request to page.js. Returns whether it drew it (the reply is synchronous).
-  const askPage = (req) => {
-    stackResult = null;
-    const nonce = Math.random().toString(36).slice(2);
-    document.dispatchEvent(new CustomEvent('mathtyping:stack', { detail: JSON.stringify({ ...req, nonce }) }));
-    if (stackResult && stackResult.ok) return true;
-    const why = stackResult ? stackResult.reason || 'an older version is still running in this tab; reload the tab'
-      : 'the page script did not answer; reload the tab';
-    toast(`Math typing: couldn't draw it: ${why}`, 6000);
+    const st = rep && rep.stack;
+    if (!st) return false;
+    if (st.root) return true;
+    if (st.deriv) return !!settings.categories.deriv;
+    if (st.bounds) return !!settings.categories.bounds;
     return false;
   };
 
   let stackResult = null;
+  let pendingNonce = null;
   document.addEventListener('mathtyping:stack-done', (e) => {
-    // Several page scripts can answer (an old version left in the tab): a success wins.
     try {
       const r = JSON.parse(e.detail);
+      if (r.nonce !== pendingNonce) return;
+      // Several page scripts can answer (an old version left in the tab): a success wins.
       if (!stackResult || !stackResult.ok) stackResult = r;
     } catch (_) {}
   });
 
+  // Sends a drawing request to page.js. Returns its answer (the reply is synchronous).
+  const askPage = (req) => {
+    stackResult = null;
+    pendingNonce = Math.random().toString(36).slice(2);
+    document.dispatchEvent(new CustomEvent('mathtyping:stack', { detail: JSON.stringify({ ...req, nonce: pendingNonce }) }));
+    const res = stackResult || { ok: false, reason: 'the page script did not answer; reload the tab' };
+    if (!res.ok) {
+      const why = stackResult ? res.reason || 'an older version is still running in this tab; reload the tab' : res.reason;
+      toast(`Math typing: couldn't draw it: ${why}`, 6000);
+    }
+    return res;
+  };
+
+  // While a drawing is handed over (the text box closes, the next one opens), keys you type are
+  // held here and typed into the new box once it has the caret, in order.
+  let busy = false;
+  let held = '';
+  let busyTimer = 0;
+  const startBusy = () => {
+    busy = true;
+    held = '';
+    clearTimeout(busyTimer);
+    busyTimer = setTimeout(endBusy, 1500); // never hold keys for longer than this
+  };
+  const endBusy = () => {
+    if (!busy) return;
+    busy = false;
+    clearTimeout(busyTimer);
+    const keys = held;
+    held = '';
+    const el = document.activeElement;
+    if (!keys || !isEditable(el)) return;
+    // Typed through the editor, so shortcuts still apply to them.
+    for (const ch of keys) document.execCommand('insertText', false, ch);
+  };
+  document.addEventListener('mathtyping:ready', () => setTimeout(endBusy, 0));
+
   const stack = (el, info, rep, finish) => {
     const pre = rep.stack.pre || '';
     const removed = info.before.slice(info.before.length - rep.length + pre.length);
+    const restore = rep.text.slice(pre.length) || removed;
     replaceBeforeCaret(info, rep.length - pre.length, '');
     last = null;
     hideHints();
-    // Give tldraw a moment to take in the deletion before reading the caret position.
-    setTimeout(() => {
-      if (!askPage({ ...rep.stack, finish: !!finish })) {
-        // Could not draw it: put the text back, in its inline form when there is one.
+    hideRootBar();
+    startBusy();
+    // Let tldraw take in the deletion before page.js reads the caret position.
+    requestAnimationFrame(() => {
+      const res = askPage({ ...rep.stack, finish: !!finish, restore });
+      if (res.ok) return;
+      // Could not draw it: put the text back (inline form when there is one), unless page.js
+      // already recreated it.
+      if (!res.restored) {
         const now = caretInfo(el);
-        if (now) replaceBeforeCaret(now, 0, rep.text.slice(pre.length) || removed);
+        if (now) replaceBeforeCaret(now, 0, restore);
       }
-    }, 30);
+      endBusy();
+    });
+  };
+
+  // Replaces the line with its caption and draws the figure under it; puts the line back on failure.
+  const drawFigure = (el, info, res, caption) => {
+    const original = info.before;
+    replaceBeforeCaret(info, info.before.length, caption);
+    startBusy();
+    requestAnimationFrame(() => {
+      const r = askPage({ type: 'figure', figure: res.figure });
+      if (!r.ok) {
+        const now = caretInfo(el);
+        if (now && now.before.endsWith(caption)) replaceBeforeCaret(now, caption.length, original);
+      }
+      endBusy();
+    });
   };
 
   // ---------------------------------------------------------------- converting
@@ -209,17 +293,18 @@
   // `first` finds the first replacement; later ones use the normal rules.
   const inBlock = (before) => settings.categories.blocks && MT.openBlockAt(before) >= 0;
 
-  const convert = (el, first, finish = false) => {
+  const convert = (el, first, { finish = false, allowStack = true } = {}) => {
     let start = null;
     for (let i = 0; i < 4; i++) {
       const info = caretInfo(el);
       if (!info) break;
-      const rep = (i === 0 ? first : MT.findReplacement)(rules, info.before);
+      // Shortcuts only look at the end of the line: keep the work per key small on long lines.
+      const rep = (i === 0 ? first : MT.findReplacement)(rules, info.before.slice(-300));
       if (!rep) break;
       // Inside an open //{ … } block, fractions wait for the block to close.
       if (inBlock(info.before.slice(0, -1)) &&
           (rep.stack || info.before.slice(info.before.length - rep.length).includes('//'))) break;
-      if (rep.stack && canStack(el, rep)) {
+      if (rep.stack && allowStack && canStack(el, rep)) {
         stack(el, info, rep, finish);
         return;
       }
@@ -228,13 +313,13 @@
       replaceBeforeCaret(info, rep.length, rep.text);
     }
     if (start === null) return;
-    // Remember what changed, for Backspace undo.
+    // Remember what changed (and exactly where), for Backspace undo.
     const info = caretInfo(el);
     if (!info) return;
     const end = info.before;
     let p = 0;
     while (p < start.length && p < end.length && start[p] === end[p]) p++;
-    last = { el, original: start.slice(p), text: end.slice(p) };
+    last = { el, original: start.slice(p), text: end.slice(p), node: info.node, offset: info.offset };
   };
 
   // ---------------------------------------------------------------- equation blocks and commands
@@ -249,19 +334,24 @@
     return true;
   };
 
-  // "… /draw" then space or Enter: the line is drawn as an equation.
+  // Layout syntax (// fractions, {…} groups, \frac, raised groups): /draw lays the line out.
+  const LAYOUT = /\/\/|[{}]|\\frac/;
+
+  // "… /draw" then space or Enter: the line is drawn as an equation (or, for a plain equation
+  // in x and y such as y = 3x² + 2x, as its graph).
   const drawLine = (el, finish) => {
     if (!settings.categories.draw) return false;
     const info = caretInfo(el);
-    const m = info && info.before.match(/^([\s\S]*?)\s*\/draw\s?$/);
-    if (!m || !m[1].trim()) return false;
+    const m = info && visible(info.before).match(/^([\s\S]*?\S)\s+\/draw\s?$/);
+    if (!m) return false;
     if (!canDraw(el)) {
       toast('Math typing: /draw needs a plain text box (T tool)', 5000);
       return true;
     }
-    // An equation in x and y gets its graph; anything else is laid out as an equation.
     let plot = null;
-    try { plot = settings.categories.plot && TOOLS ? TOOLS.asPlot(m[1]) : null; } catch (_) { plot = null; }
+    if (!LAYOUT.test(m[1])) {
+      try { plot = settings.categories.plot && TOOLS ? TOOLS.asPlot(m[1]) : null; } catch (_) { plot = null; }
+    }
     if (plot) {
       last = null;
       hideHints();
@@ -281,7 +371,7 @@
     const on = settings.categories;
     let res;
     try {
-      res = TOOLS.runCommand(info.before, { cas: on.cas, plot: on.plot, shapes: on.shapes });
+      res = TOOLS.runCommand(info.before, { cas: on.cas, plot: on.plot, shapes: on.shapes, draw: on.draw });
     } catch (err) {
       toast(`Math typing: ${err.message}`, 5000);
       return true; // keep the line so it can be fixed
@@ -292,7 +382,7 @@
     if (res.equation) {
       // /draw{ … }: lay the equation out like "… /draw"
       if (!canDraw(el)) {
-        toast('Math typing: /draw needs a plain text box (T tool)');
+        toast('Math typing: /draw needs a plain text box (T tool)', 5000);
         return true;
       }
       stack(el, info, {
@@ -306,22 +396,13 @@
       return true;
     }
     if (!canDraw(el)) {
-      toast('Math typing: graphs and shapes need a plain text box (T tool)');
+      toast('Math typing: graphs and shapes need a plain text box (T tool)', 5000);
       return true;
     }
-    drawFigure(el, info, res, /^\s*[/\\]draw\s+(?:circle|ellipse|oval|square|rect|right|equilateral|triangle|regular|polygon|pentagon|hexagon|heptagon|octagon|nonagon|decagon|angle)/i.test(info.before) ? '' : res.caption);
+    const isShape = /^\s*[/\\]draw\s+(?:circle|ellipse|oval|square|rect|right|equilateral|triangle|regular|polygon|pentagon|hexagon|heptagon|octagon|nonagon|decagon|angle)/i
+      .test(visible(info.before));
+    drawFigure(el, info, res, isShape ? '' : res.caption);
     return true;
-  };
-
-  // Replaces the line with its caption and draws the figure under it; puts the line back on failure.
-  const drawFigure = (el, info, res, caption) => {
-    const original = info.before;
-    replaceBeforeCaret(info, info.before.length, caption);
-    setTimeout(() => {
-      if (askPage({ type: 'figure', figure: res.figure })) return;
-      const now = caretInfo(el);
-      if (now && now.before.endsWith(caption)) replaceBeforeCaret(now, caption.length, original);
-    }, 30);
   };
 
   // ---------------------------------------------------------------- live root bar
@@ -341,8 +422,13 @@
     return -1;
   };
   const updateRootBar = (el) => {
-    const info = caretInfo(el);
-    const at = info && info.node ? openRootAt(info.before) : -1;
+    const info = settings.enabled && el ? caretInfo(el) : null;
+    // Nothing to do (and no layout work) unless a √{ is open.
+    if (!info || !info.node || !/[√∛]\{/.test(info.before)) {
+      if (rootBar && rootBar.style.display !== 'none') hideRootBar();
+      return;
+    }
+    const at = openRootAt(info.before);
     if (at < 0) return hideRootBar();
     const range = document.createRange();
     range.setStart(info.node, at + 1);
@@ -357,6 +443,7 @@
     }
     if (!rootBar) {
       rootBar = document.createElement('div');
+      rootBar.dataset.mathtypingUi = 'rootbar';
       Object.assign(rootBar.style, { position: 'fixed', zIndex: '2147483646', pointerEvents: 'none', height: '0' });
       document.body.appendChild(rootBar);
     }
@@ -367,29 +454,75 @@
       width: `${rect.width + 2}px`, borderTop: `${thick}px solid ${color}`,
     });
   };
+  // Keep the bar on the text when the caret moves or the board pans/zooms.
+  let barFrame = 0;
+  const followBar = () => {
+    if (dead || barFrame || !rootBar || rootBar.style.display === 'none') return;
+    barFrame = requestAnimationFrame(() => {
+      barFrame = 0;
+      const el = document.activeElement;
+      if (isEditable(el)) updateRootBar(el); else hideRootBar();
+    });
+  };
+  document.addEventListener('selectionchange', followBar);
+  window.addEventListener('wheel', followBar, { passive: true, capture: true });
 
   // ---------------------------------------------------------------- hints
-  // A small list under the caret: what the word you are typing can turn into.
-  // Tab takes the highlighted one, ↑/↓ move, Esc closes it.
+  // A small card under the caret: what the maths word you are typing can turn into.
+  // Tab takes the highlighted suggestion. ↑/↓ pick only for \commands and /commands, so arrows
+  // keep moving the caret in ordinary text. Esc closes it and still does what Esc does.
   let hintBox = null;
   let hintItems = [];
   let hintIndex = 0;
-  let hintFor = null; // { el, token }
+  let hintFor = null; // { el, token, rect }
 
+  const HINT_CSS = `
+    :host { all: initial; }
+    .card { position: fixed; z-index: 2147483647; min-width: 200px; max-width: 340px; padding: 6px;
+      border-radius: 12px; font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: rgba(255,255,255,0.98); color: #16181d; border: 1px solid #e3e5ea;
+      box-shadow: 0 10px 30px rgba(15,20,40,0.16), 0 2px 6px rgba(15,20,40,0.08); }
+    .row { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 8px;
+      padding: 4px 8px 4px 4px; border-radius: 8px; cursor: pointer; }
+    .row.on { background: #e8effd; }
+    .sym { width: 34px; height: 30px; display: grid; place-items: center; border-radius: 7px;
+      background: #f1f3f7; font-size: 17px; overflow: hidden; white-space: nowrap; }
+    .row.on .sym { background: #fff; }
+    .key { font: 12px ui-monospace, Consolas, monospace; color: #2f5fcc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .note { color: #6a6f7a; font-size: 11px; white-space: nowrap; }
+    .foot { display: flex; gap: 10px; padding: 6px 8px 2px; color: #6a6f7a; font-size: 11px; border-top: 1px solid #eceef2; margin-top: 4px; }
+    kbd { font: 10.5px ui-monospace, Consolas, monospace; background: #f1f3f7; border: 1px solid #dfe2e8;
+      border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: #16181d; }
+    @media (prefers-color-scheme: dark) {
+      .card { background: rgba(32,34,40,0.98); color: #eceef2; border-color: #3a3d45; box-shadow: 0 10px 30px rgba(0,0,0,0.45); }
+      .row.on { background: #2c3b5c; }
+      .sym, kbd { background: #2b2e35; color: #eceef2; border-color: #3a3d45; }
+      .row.on .sym { background: #1f2229; }
+      .key { color: #9fbcff; }
+      .note, .foot { color: #9da1ab; }
+      .foot { border-top-color: #33363d; }
+    }`;
+  let hintRoot = null;
   const ensureHintBox = () => {
     if (hintBox) return hintBox;
+    // A shadow root keeps tldraw's styles out of the card and the card's styles out of tldraw.
+    const host = document.createElement('div');
+    host.dataset.mathtypingUi = 'hints';
+    document.body.appendChild(host);
+    hintRoot = host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = HINT_CSS;
     hintBox = document.createElement('div');
-    Object.assign(hintBox.style, {
-      position: 'fixed', zIndex: '2147483647', display: 'none', minWidth: '160px', maxWidth: '320px',
-      background: 'rgba(28,28,32,0.96)', color: '#f2f2f4', borderRadius: '8px', padding: '4px',
-      font: '13px/1.35 system-ui, sans-serif', boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
-    });
+    hintBox.className = 'card';
+    hintBox.setAttribute('role', 'listbox');
+    hintBox.setAttribute('aria-label', 'Math typing suggestions');
+    hintBox.style.display = 'none';
+    hintRoot.append(style, hintBox);
     hintBox.addEventListener('mousedown', (e) => {
       e.preventDefault(); // keep the caret in the text box
       const row = e.target.closest('[data-i]');
       if (row) acceptHint(Number(row.dataset.i));
     });
-    document.body.appendChild(hintBox);
     return hintBox;
   };
 
@@ -399,60 +532,74 @@
     hintFor = null;
   };
 
-  const renderHints = (rect) => {
+  const renderHints = () => {
     const box = ensureHintBox();
+    const rect = hintFor.rect;
     box.replaceChildren();
     hintItems.forEach((h, i) => {
       const row = document.createElement('div');
       row.dataset.i = String(i);
-      Object.assign(row.style, {
-        display: 'flex', gap: '10px', alignItems: 'baseline', padding: '3px 8px', borderRadius: '5px',
-        cursor: 'pointer', background: i === hintIndex ? 'rgba(110,160,255,0.28)' : 'transparent',
-      });
-      const key = document.createElement('code');
+      row.className = 'row' + (i === hintIndex ? ' on' : '');
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', String(i === hintIndex));
+      const sym = document.createElement('span');
+      sym.className = 'sym';
+      sym.textContent = h.out;
+      const key = document.createElement('span');
+      key.className = 'key';
       key.textContent = h.key;
-      Object.assign(key.style, { font: '12px ui-monospace, Consolas, monospace', color: '#b9c6ff' });
-      const out = document.createElement('span');
-      out.textContent = h.out;
-      out.style.fontSize = '15px';
-      row.append(key, out);
-      if (h.note) {
-        const note = document.createElement('span');
-        note.textContent = h.note;
-        Object.assign(note.style, { color: '#9a9aa2', fontSize: '11px', marginLeft: 'auto' });
-        row.append(note);
-      }
+      const note = document.createElement('span');
+      note.className = 'note';
+      note.textContent = h.note || '';
+      row.append(sym, key, note);
       box.append(row);
     });
     const foot = document.createElement('div');
-    foot.textContent = 'Tab to use · ↑↓ to pick · Esc to close';
-    Object.assign(foot.style, { color: '#8a8a92', fontSize: '11px', padding: '2px 8px 1px' });
+    foot.className = 'foot';
+    const tip = (k, t) => {
+      const span = document.createElement('span');
+      const kb = document.createElement('kbd');
+      kb.textContent = k;
+      span.append(kb, ` ${t}`);
+      return span;
+    };
+    foot.append(tip('Tab', 'use'));
+    if (hintFor.arrows && hintItems.length > 1) foot.append(tip('↑↓', 'pick'));
+    foot.append(tip('Esc', 'close'));
     box.append(foot);
     box.style.display = 'block';
-    const top = rect.bottom + 6;
+    const top = rect.bottom + 8;
     const height = box.offsetHeight;
-    box.style.top = `${top + height > window.innerHeight ? rect.top - height - 6 : top}px`;
-    box.style.left = `${Math.min(rect.left, window.innerWidth - box.offsetWidth - 8)}px`;
+    box.style.top = `${top + height > window.innerHeight ? Math.max(4, rect.top - height - 8) : top}px`;
+    box.style.left = `${Math.max(4, Math.min(rect.left - 6, window.innerWidth - box.offsetWidth - 8))}px`;
   };
 
   const updateHints = (el) => {
     if (!settings.enabled || !settings.hints) return hideHints();
     const info = caretInfo(el);
-    const m = info && info.before.match(/(?:^|[^A-Za-z\\/])([\\/]?[A-Za-z]{2,})$/);
+    const line = info ? visible(info.before) : '';
+    const m = line.match(/(?:^|[^A-Za-z\\/])([\\/]?[A-Za-z]{2,})$/);
     if (!m) return hideHints();
     const token = m[1];
-    const plainTok = token.replace(/^[\\/]/, '');
+    const prefix = /^[\\/]/.test(token) ? token[0] : '';
+    // Plain words need 3 letters (so "in", "to", "be" don't pop the list up), and inside a
+    // /command line only the command names are suggested.
+    if (!prefix && (token.length < 3 || /^\s*[/\\][a-z]/i.test(line))) return hideHints();
+    const plainTok = token.slice(prefix.length);
+    if (!plainTok) return hideHints();
     const lower = plainTok.toLowerCase();
     const scored = [];
     for (const h of hintList) {
-      const key = h.key.replace(/^[\\/]/, '');
-      if (token.startsWith('\\') && !h.key.startsWith('\\')) continue;
-      if (token.startsWith('/') !== h.key.startsWith('/')) continue;
+      const hp = /^[\\/]/.test(h.key) ? h.key[0] : '';
+      if (hp !== prefix) continue; // LaTeX names only after \, commands only after /
+      const key = h.key.slice(hp.length);
       if (!key.toLowerCase().startsWith(lower)) continue;
+      if (!prefix && key === plainTok && key.length === h.key.length && !/[{(_]/.test(key)) {
+        // the word is already complete: the next space converts it, no list needed
+        continue;
+      }
       let score = key.length;
       if (key.startsWith(plainTok)) score -= 100; // same case first
-      if (key === plainTok) score -= 100; // exact match first
-      if (h.key.startsWith('\\') && !token.startsWith('\\')) score += 20; // LaTeX after plain words
       scored.push([score, h]);
     }
     if (!scored.length) return hideHints();
@@ -467,7 +614,6 @@
       if (hintItems.length === 6) break;
     }
     hintIndex = 0;
-    hintFor = { el, token };
     let rect;
     try {
       const r = info.sel.getRangeAt(0).cloneRange();
@@ -475,17 +621,20 @@
       rect = r.getBoundingClientRect();
     } catch (_) {}
     if (!rect || (!rect.width && !rect.height)) rect = el.getBoundingClientRect();
-    renderHints(rect);
+    hintFor = { el, token, rect: { top: rect.top, bottom: rect.bottom, left: rect.left }, arrows: !!prefix };
+    renderHints();
   };
 
-  // What accepting a hint types: the symbol, or the start of a template (∫_, d/dx …).
+  // What accepting a hint types: the symbol, or the start of a template (∫_, abs{, \frac{ …).
   const hintInsert = (h) => {
     if (h.key === 'int_a^b') return '∫_';
     if (h.key.startsWith('sum_')) return '∑_';
     if (h.key.startsWith('prod_')) return '∏_';
     if (h.key.startsWith('lim_')) return 'lim_';
-    if (h.note === 'stacked') return h.key;
     if (/^(sqrt|cbrt)[{(]…[})]$/.test(h.key)) return (h.key.startsWith('sqrt') ? '√' : '∛') + h.key[4];
+    const brace = h.key.match(/^(\\?[a-z]+)\{/i);
+    if (brace && h.key !== '//{…}') return `${brace[1]}{`; // abs{, bar{, \frac{ … then type inside
+    if (h.note === 'stacked') return h.key;
     if (h.note === 'then Enter') return h.key + ' ';
     if (h.key === '/draw') return '/draw';
     return h.out;
@@ -500,11 +649,12 @@
     if (!info || !info.before.endsWith(target.token)) return;
     replaceBeforeCaret(info, target.token.length, hintInsert(h));
     last = null;
+    updateRootBar(target.el);
   };
 
   // ---------------------------------------------------------------- events
   document.addEventListener('input', (e) => {
-    if (applying) return;
+    if (dead || applying) return;
     last = null;
     const el = e.target;
     if (!settings.enabled || !isEditable(el)) return hideHints();
@@ -514,7 +664,9 @@
     }
     // Let the editor finish handling the keystroke first.
     setTimeout(() => {
+      if (busy) return;
       convert(el, MT.findReplacement);
+      if (busy) return;
       updateRootBar(el);
       if (e.data === '}' && drawBlock(el)) return;
       if (e.data === ' ' && drawLine(el, false)) return;
@@ -523,39 +675,52 @@
   }, true);
 
   window.addEventListener('keydown', (e) => {
+    if (dead) return;
     const el = document.activeElement;
 
-    // The hint list, while it is open
+    // While a drawing is being handed over, hold typed keys for the next text box.
+    if (busy) {
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        held += e.key;
+        return;
+      }
+      if (e.key === 'Backspace' && held) {
+        e.preventDefault();
+        e.stopPropagation();
+        held = held.slice(0, -1);
+        return;
+      }
+    }
+
+    // The suggestion card, while it is open
     if (hintItems.length && hintFor && el === hintFor.el && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      if (e.key === 'Tab') {
+      if (e.key === 'Tab' && !e.shiftKey) {
         e.preventDefault();
         e.stopPropagation();
         acceptHint(hintIndex);
         return;
       }
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && hintFor.arrows) {
         e.preventDefault();
         e.stopPropagation();
         const n = hintItems.length;
         hintIndex = (hintIndex + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
-        const rect = hintBox.getBoundingClientRect();
-        renderHints({ top: rect.top - 6, bottom: rect.top - 6, left: rect.left });
+        renderHints();
         return;
       }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        hideHints();
-        return;
-      }
+      if (e.key === 'Escape') hideHints(); // and let Esc through
     }
 
-    // Backspace right after a replacement restores what you typed (√ -> sqrt).
+    // Backspace right after a replacement restores what you typed (√ -> sqrt), only at the
+    // same spot.
     if (e.key === 'Backspace' && last && !e.ctrlKey && !e.altKey && !e.metaKey) {
       const info = caretInfo(last.el);
       const undo = last;
       last = null;
-      if (!info || !info.before.endsWith(undo.text)) return;
+      if (!settings.enabled || !info || info.node !== undo.node || info.offset !== undo.offset ||
+          !info.before.endsWith(undo.text)) return;
       e.preventDefault();
       e.stopPropagation();
       replaceBeforeCaret(info, undo.text.length, undo.original);
@@ -563,30 +728,33 @@
     }
 
     // Enter / Escape / Tab: convert a word that has no space after it yet (2pi -> 2π).
+    // Only Enter runs commands and draws; Esc and Tab never draw.
     if ((e.key === 'Enter' || e.key === 'Escape' || e.key === 'Tab') && settings.enabled &&
         !e.isComposing && isEditable(el)) {
       last = null;
       hideHints();
       const info = caretInfo(el);
-      if (e.key === 'Enter' && !e.shiftKey && info && /\/draw\s?$/.test(info.before) && drawLine(el, true)) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
+      if (e.key === 'Enter' && !e.shiftKey && info) {
+        if (/\s\/draw\s?$/.test(visible(info.before)) && drawLine(el, true)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        if (runCommandLine(el, info)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        const rep = MT.findPendingWord(rules, info.before.slice(-300));
+        if (rep && rep.stack && canStack(el, rep)) {
+          // A drawn fraction/bound at the end of the text: draw it and stop editing.
+          e.preventDefault();
+          e.stopPropagation();
+          stack(el, info, rep, true);
+          return;
+        }
       }
-      if (e.key === 'Enter' && !e.shiftKey && info && runCommandLine(el, info)) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      const rep = info && MT.findPendingWord(rules, info.before);
-      if (rep && rep.stack && canStack(el, rep)) {
-        // A stacked fraction/bound at the end: draw it and stop editing.
-        e.preventDefault();
-        e.stopPropagation();
-        stack(el, info, rep, true);
-        return;
-      }
-      convert(el, MT.findPendingWord);
+      convert(el, MT.findPendingWord, { allowStack: false });
       return;
     }
 
@@ -597,24 +765,29 @@
       settings.enabled = !settings.enabled;
       saveSettings();
       applySettings(settings);
-      toast(settings.enabled ? 'Math typing: ON  (sqrt → √)' : 'Math typing: OFF');
+      toast(settings.enabled ? 'Math typing: ON  (sqrt{ → √)' : 'Math typing: OFF');
     }
   }, true);
 
-  // Clicking away from the text box: convert a trailing word too (inline only).
+  // Clicking away from the text box: convert a trailing word too (inline only), and remove
+  // text boxes that were left empty after a drawing.
   document.addEventListener('focusout', (e) => {
+    if (dead) return;
     hideHints();
     hideRootBar();
-    if (!settings.enabled || applying || !isEditable(e.target)) return;
+    if (!isEditable(e.target)) return;
+    setTimeout(() => document.dispatchEvent(new CustomEvent('mathtyping:cleanup')), 50);
+    if (!settings.enabled || applying || busy) return;
     last = null;
-    const info = caretInfo(e.target);
-    const rep = info && MT.findPendingWord(rules, info.before);
-    if (rep && rep.stack) return; // stacked layouts need the caret; leave the text as typed
-    convert(e.target, MT.findPendingWord);
+    const sel = window.getSelection();
+    if (!sel || !sel.anchorNode || !e.target.contains(sel.anchorNode)) return;
+    convert(e.target, MT.findPendingWord, { allowStack: false });
   }, true);
 
   document.addEventListener('mousedown', (e) => {
-    if (hintBox && !hintBox.contains(e.target)) hideHints();
+    if (dead) return;
+    last = null;
+    if (hintBox && !e.composedPath().includes(hintBox)) hideHints();
   }, true);
 
   let toastEl = null;
@@ -622,10 +795,13 @@
   const toast = (msg, ms = 1600) => {
     if (!toastEl) {
       toastEl = document.createElement('div');
+      toastEl.dataset.mathtypingUi = 'toast';
+      toastEl.setAttribute('role', 'status');
       Object.assign(toastEl.style, {
-        position: 'fixed', left: '50%', bottom: '80px', transform: 'translateX(-50%)',
-        background: 'rgba(30,30,30,0.92)', color: '#fff', padding: '8px 14px', borderRadius: '8px',
+        position: 'fixed', left: '50%', bottom: '80px', transform: 'translateX(-50%)', maxWidth: '80vw',
+        background: 'rgba(28,30,36,0.95)', color: '#fff', padding: '9px 16px', borderRadius: '10px',
         font: '14px system-ui, sans-serif', zIndex: '2147483647', pointerEvents: 'none',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
       });
       document.body.appendChild(toastEl);
     }

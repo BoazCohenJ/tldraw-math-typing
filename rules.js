@@ -30,6 +30,7 @@
     { id: 'scripts', label: 'Exponents and indices (x^2, e^{2x}, x_1)' },
     { id: 'draw', label: '/draw at the end of a line draws it as an equation' },
     { id: 'deriv', label: 'Draw d/dx, dy/dx, ∂/∂x stacked as you type the space after' },
+    { id: 'bounds', label: 'Draw lim_{…}, ∫_{…}^{…}, ∑_{…}^{…} on the space after' },
     { id: 'fractions', label: 'Fractions as you type (3//4 → ¾)', off: true },
     { id: 'stacked', label: 'Draw fractions and bounds as you type, no /draw needed', off: true },
     { id: 'blocks', label: 'Draw //{…} as soon as } closes it (no /draw needed)' },
@@ -45,7 +46,7 @@
 
   // Typed sequences that change as soon as they are complete. Order matters: longer ones first.
   const SYMBOLS = [
-    ['××', '·', '** (two stars)'], // `*` becomes × at once, so `**` arrives here as ××
+    ['×*', '·', '** (two stars)'], // `*` after a term becomes ×, so `**` arrives here as ×*
     ['===', '≡'],
     ['...', '…'],
     ['≤>', '⇔', '<=>'],
@@ -67,10 +68,7 @@
     alpha: 'α', beta: 'β', gamma: 'γ', delta: 'Δ', epsilon: 'ε', theta: 'θ', lambda: 'λ',
     mu: 'μ', sigma: 'Σ', phi: 'φ', omega: 'ω', Delta: 'Δ', Sigma: 'Σ', Omega: 'Ω',
   };
-  const WORDS = {
-    pi: 'π', inf: '∞', deg: '°', div: '÷', int: '∫', partial: '∂', approx: '≈', forall: '∀',
-    emptyset: '∅',
-  };
+  const WORDS = { pi: 'π', inf: '∞', approx: '≈', forall: '∀', emptyset: '∅' };
   const SETS = { NN: 'ℕ', ZZ: 'ℤ', QQ: 'ℚ', RR: 'ℝ' };
 
   // LaTeX names, typed with a backslash: `\in ` -> `∈ `. These cover English words
@@ -162,7 +160,7 @@
   // One bound: a (…) or {…} group, or a run of characters without spaces, brackets, ^ or _.
   const BOUND = String.raw`(?:\([^()]*\)|\{[^{}]*\}|[^\s(){}^_]+)`;
   // Matches the start of a bound spec right before `_` or `^`, so exponent rules leave it alone.
-  const IN_BOUNDS = String.raw`(?<!(?:[${BIG_OPS}]|lim)(?:_${BOUND})?)`;
+  const IN_BOUNDS = String.raw`(?<!(?:[${BIG_OPS}]|lim)(?:[_^]${BOUND})?)`;
   // A fraction part: a (…) or {…} group, or letters, digits, dots, roots and exponents.
   const PART = String.raw`(\([^()]+\)|\{[^{}]+\}|[\p{L}\p{N}.√∛∞]+)`;
 
@@ -193,25 +191,27 @@
       }
     }
 
-    if (stacked) {
+    if (stacked || on.bounds) {
       // ∫_0^1 , ∑_(i=1)^n , lim_(x→0)  followed by a space: bounds above and below.
+      // Without "draw as you type", only bounds written in {…} are drawn.
       rules.push([new RegExp(`(^|[^a-zA-Z])([${BIG_OPS}]|lim)(?:_(${BOUND}))?(?:\\^(${BOUND}))?(\\s)$`), (m) => {
         const [, pre, op, lo, hi] = m;
         if (!lo && !hi) return null;
         if (op === 'lim' && hi) return null;
+        if (!stacked && !/^\{/.test(lo || '') && !/^\{/.test(hi || '')) return null;
         const lower = lo ? tidy(lo) : '';
         const upper = hi ? tidy(hi) : '';
         // Outside a plain text shape it falls back to ∫₀¹ when the bounds have script forms.
         const subs = lower ? mapAll(lower, SUB) : '';
         const sups = upper ? mapAll(upper, SUP) : '';
         const inline = subs != null && sups != null ? pre + op + subs + sups + m[5] : m[0];
-        return { text: inline, stack: { type: 'bigop', op, lower, upper, pre } };
+        return { text: inline, stack: { type: 'bigop', op, lower, upper, pre, bounds: true } };
       }]);
     }
 
     if (stacked || on.deriv) {
       // d/dx, dy/dx, d²y/dx², ∂/∂x (or ∂/∂ x) followed by a space or symbol: drawn stacked
-      rules.push([/(^|[^\p{L}\p{N}])([d∂][²³]?[a-zA-Z]?)\/([d∂] ?[a-zA-Z][²³]?)([^\p{L}\p{N}])$/u, (m) => ({
+      rules.push([/(^|[^\p{L}\p{N}])([d∂][²³]?[a-zA-Z]?)\/([d∂] ?[a-zA-Z][²³]?)([^\p{L}\p{N}])$/u, (m) => (/^do$/i.test(m[2]) ? null : {
         text: m[0],
         stack: { type: 'fraction', num: m[2], den: m[3].replace(' ', ''), after: m[4].trim(), pre: m[1], deriv: true },
       })]);
@@ -223,7 +223,7 @@
     }
 
     // \\ is easy to type for // (fractions, //{…} blocks): treat it the same.
-    rules.push([/\\\\$/, () => '//']);
+    if (on.draw || on.blocks || stacked || on.fractions) rules.push([/\\\\$/, () => '//']);
 
     if (on.latex) {
       const names = Object.keys(LATEX).sort((a, b) => b.length - a.length).join('|');
@@ -266,7 +266,12 @@
     }
 
     if (on.symbols) {
-      for (const [from, to] of SYMBOLS) rules.push([new RegExp(`${escapeRe(from)}$`), () => to]);
+      for (const [from, to] of SYMBOLS) {
+        // * is a multiplication only after a number, letter or bracket: "* item" lists and
+        // **bold** stay as typed
+        const re = from === '*' ? /(?<=[\p{L}\p{N})\]])(?<!\*\*\S[^*]*)\*$/u : new RegExp(`${escapeRe(from)}$`);
+        rules.push([re, () => to]);
+      }
     }
 
     if (on.scripts) {
@@ -278,7 +283,9 @@
       rules.push([new RegExp(`${guard}_${group}`), (m) => mapAll(inside(m), SUB)]);
       // single: x^2 -> x², x_1 -> x₁ (`^{` and `^(` wait for the group above)
       rules.push([new RegExp(`${guard}\\^([^({])$`), (m) => SUP[m[1]] ?? null]);
-      rules.push([new RegExp(`${guard}_([^({])$`), (m) => SUB[m[1]] ?? null]);
+      // (not inside words: my_name, file_name and x_axis-like identifiers with 2+ letters stay)
+      rules.push([new RegExp(`${guard}(?<![\\p{L}][\\p{L}])(?<=\\S)_([^({])$`, 'u'), (m) => SUB[m[1]] ?? null]);
+      rules.push([/([ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ])([a-z])$/, (m) => (SUB[m[2]] ? m[1] + SUB[m[2]] : null)]);
       // keep typing digits after an exponent/index: x²3 -> x²³, x⁻1 -> x⁻¹
       rules.push([/([⁰¹²³⁴⁵⁶⁷⁸⁹⁻])([0-9])$/, (m) => m[1] + SUP[m[2]]]);
       rules.push([/([₀₁₂₃₄₅₆₇₈₉₋])([0-9])$/, (m) => m[1] + SUB[m[2]]]);
@@ -308,7 +315,16 @@
       }]);
     }
 
-    if (on.words) rules.push(wordRule(WORDS));
+    if (on.words) {
+      rules.push(wordRule(WORDS));
+      // Words that are also English or code ("the deg of p", "int x = 5", "partial fraction")
+      // only convert next to maths.
+      rules.push([/(\d\s*)deg([^a-zA-Z])$/, (m) => `${m[1]}°${m[2]}`]); // 90deg -> 90°
+      rules.push([/([\d)]\s*)div(\s)$/, (m) => `${m[1]}÷${m[2]}`]); // 8 div 2 -> 8 ÷ 2
+      rules.push([/(^|[^a-zA-Z\\])int([_^(])$/, (m) => `${m[1]}∫${m[2]}`]); // int_0^1, int(x)
+      rules.push([/(^|[^a-zA-Z\\])partial([/_(])$/, (m) => `${m[1]}∂${m[2]}`]); // partial/partial x
+      rules.push([/(\/\s?)partial(\s?[a-zA-Z])$/, (m) => `${m[1]}∂${m[2]}`]); // the second one, after the /
+    }
     if (on.greek) rules.push(wordRule(GREEK));
     if (on.sets) rules.push(wordRule(SETS));
     return rules;
@@ -503,7 +519,10 @@
   const cheatSheet = () => {
     const rows = [];
     const add = (cat, type, get) => rows.push({ cat, type, get });
-    for (const [from, to, label] of SYMBOLS) add('symbols', label || from, to);
+    for (const [from, to, label] of SYMBOLS) {
+      if (/tldraw turns/.test(label || '')) continue; // an internal step of the <-> shortcut
+      add('symbols', label || from, to);
+    }
     add('roots', 'sqrt{x+1}', '√ with a bar over x+1, drawn on }');
     add('roots', 'sqrt(81+9)  4sqrt(10)', '√(81+9)  4√10');
     add('roots', 'cbrt{8}  cbrt(8)', '∛8');
@@ -545,6 +564,12 @@
     add('shapes', 'draw hexagon 2  /  polygon 7 2', 'regular polygons');
     add('shapes', 'draw angle 40', 'angle with its arc');
     for (const [k, v] of Object.entries(WORDS)) add('words', k, v);
+    add('words', '90deg', '90°');
+    add('words', '8 div 2', '8 ÷ 2');
+    add('words', 'int_ int^ int(', '∫');
+    add('words', 'partial/partial x', '∂/∂x');
+    add('bounds', 'lim_{x->inf} + space', 'lim with x→∞ below, drawn');
+    add('bounds', 'int_{0}^{1} + space', '∫ with bounds, drawn');
     for (const [k, v] of Object.entries(GREEK)) add('greek', k, v);
     for (const [k, v] of Object.entries(SETS)) add('sets', k, v);
     for (const [k, v] of Object.entries(LATEX)) add('latex', '\\' + k, v);

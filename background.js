@@ -1,7 +1,9 @@
-// tldraw Math Typing: after an install or update, put the add-on into tldraw tabs that are
-// already open, so they work without a reload. content.js guards against running twice.
+// tldraw Math Typing: put the add-on into tldraw tabs that are already open, so they work
+// without a reload: after an install or update, and when you allow it on tldraw.com.
+// content.js makes sure only the newest copy runs in a tab.
 const ext = globalThis.browser ?? globalThis.chrome;
 
+const ORIGINS = ['https://tldraw.com/*', 'https://*.tldraw.com/*'];
 const CONTENT = [
   'rules.js', 'fonts.js',
   'vendor/nerdamer/nerdamer.core.js', 'vendor/nerdamer/Algebra.js',
@@ -9,10 +11,10 @@ const CONTENT = [
   'mathtools.js', 'content.js',
 ];
 
-ext.runtime.onInstalled.addListener(async () => {
+const attachOpenTabs = async () => {
   let tabs = [];
   try {
-    tabs = await ext.tabs.query({ url: ['https://tldraw.com/*', 'https://*.tldraw.com/*'] });
+    tabs = await ext.tabs.query({ url: ORIGINS });
   } catch (_) { return; }
   for (const tab of tabs) {
     const target = { tabId: tab.id, allFrames: false };
@@ -24,4 +26,17 @@ ext.runtime.onInstalled.addListener(async () => {
       console.warn('[math typing] could not attach to an open tab', tab.url, err);
     }
   }
+};
+
+ext.runtime.onInstalled.addListener(attachOpenTabs);
+// Firefox asks before an add-on may run on a site: once you allow tldraw.com, start right away.
+if (ext.permissions && ext.permissions.onAdded) {
+  ext.permissions.onAdded.addListener((perms) => {
+    if ((perms.origins || []).some((o) => o.includes('tldraw.com'))) attachOpenTabs();
+  });
+}
+// The popup's "Start in this tab" button.
+ext.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === 'mathtyping:attach') return attachOpenTabs().then(() => ({ ok: true }));
+  return undefined;
 });

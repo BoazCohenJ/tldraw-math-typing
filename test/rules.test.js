@@ -50,7 +50,7 @@ const cases = [
   ['2**3', '2·3'], ['a===b', 'a≡b'], ['wait...', 'wait…'], ['p<=>q', 'p⇔q'], ['a<->b', 'a↔b'],
   ['p=>q', 'p⇒q'], ['x~=3', 'x≈3'], ['-+', '∓'], ['x<-1', 'x<-1'],
   ['omega ', 'ω '], ['Omega ', 'Ω '], ['theta)', 'θ)'], ['pi*2', 'π×2'],
-  ['int ', '∫ '], ['partial ', '∂ '], ['x in RR ', 'x in ℝ '], ['NN ', 'ℕ '],
+  ['int_', '∫_'], ['partial/', '∂/'], ['x in RR ', 'x in ℝ '], ['NN ', 'ℕ '],
   ['\\in ', '∈ '], ['\\int ', '∫ '], ['\\delta ', 'δ '], ['\\Delta ', 'Δ '], ['\\sum ', '∑ '],
   ['\\forall x', '∀ x'], ['\\subseteq ', '⊆ '], ['\\to ', '→ '], ['\\sqrt{2}', '√2'], ['\\pi ', 'π '],
   ['\\R ', 'ℝ '], ['\\infty ', '∞ '],
@@ -123,11 +123,11 @@ test('derivatives', () => {
 });
 
 test('bounds on integrals, sums and limits', () => {
-  assert.deepStrictEqual(stackOf('int_0^1 '), { type: 'bigop', op: '∫', lower: '0', upper: '1', pre: '' });
-  assert.deepStrictEqual(stackOf('int_0^inf '), { type: 'bigop', op: '∫', lower: '0', upper: '∞', pre: '' });
-  assert.deepStrictEqual(stackOf('sum_(i=1)^n '), { type: 'bigop', op: '∑', lower: 'i=1', upper: 'n', pre: '' });
-  assert.deepStrictEqual(stackOf('\\prod_(k=1)^(10) '), { type: 'bigop', op: '∏', lower: 'k=1', upper: '10', pre: '' });
-  assert.deepStrictEqual(stackOf('lim_(x->0) '), { type: 'bigop', op: 'lim', lower: 'x→0', upper: '', pre: '' });
+  assert.deepStrictEqual(stackOf('int_0^1 '), { type: 'bigop', op: '∫', lower: '0', upper: '1', pre: '' , bounds: true });
+  assert.deepStrictEqual(stackOf('int_0^inf '), { type: 'bigop', op: '∫', lower: '0', upper: '∞', pre: '' , bounds: true });
+  assert.deepStrictEqual(stackOf('sum_(i=1)^n '), { type: 'bigop', op: '∑', lower: 'i=1', upper: 'n', pre: '' , bounds: true });
+  assert.deepStrictEqual(stackOf('\\prod_(k=1)^(10) '), { type: 'bigop', op: '∏', lower: 'k=1', upper: '10', pre: '' , bounds: true });
+  assert.deepStrictEqual(stackOf('lim_(x->0) '), { type: 'bigop', op: 'lim', lower: 'x→0', upper: '', pre: '' , bounds: true });
   assert.strictEqual(stackOf('int x dx '), undefined);
   // inline fallback text (used outside plain text shapes)
   assert.strictEqual(type('int_0^1 '), '∫₀¹ ');
@@ -141,8 +141,8 @@ test('hints list', () => {
 });
 
 test('{} works for bounds and fractions', () => {
-  assert.deepStrictEqual(stackOf('sum_{i=1}^{n} '), { type: 'bigop', op: '∑', lower: 'i=1', upper: 'n', pre: '' });
-  assert.deepStrictEqual(stackOf('int_{0}^{pi} '), { type: 'bigop', op: '∫', lower: '0', upper: 'π', pre: '' });
+  assert.deepStrictEqual(stackOf('sum_{i=1}^{n} '), { type: 'bigop', op: '∑', lower: 'i=1', upper: 'n', pre: '' , bounds: true });
+  assert.deepStrictEqual(stackOf('int_{0}^{pi} '), { type: 'bigop', op: '∫', lower: '0', upper: 'π', pre: '' , bounds: true });
   assert.strictEqual(stackOf('{x+1}//{x-1} ').num, 'x+1');
   assert.strictEqual(stackOf('partial/partial x ').den, '∂x');
 });
@@ -185,7 +185,10 @@ test('defaults: nothing is drawn or folded while typing; /draw does it', () => {
   assert.strictEqual(stackOf('3//4 ', D), undefined);
   assert.strictEqual(stackOf('d/dx ', D).den, 'dx'); // d/dx is the one exception: drawn at once
   assert.strictEqual(type('int_0^1 ', D), '∫_0^1 ');
-  assert.strictEqual(type('sum_{i=1}^n ', D), '∑_{i=1}^n ');
+  // bounds written in {…} are the exception: drawn on the space (lim_{x→∞} too)
+  assert.strictEqual(stackOf('sum_{i=1}^n ', D).op, '∑');
+  assert.strictEqual(stackOf('lim_{x->inf} ', D).lower, 'x→∞');
+  assert.strictEqual(stackOf('sum_i^n ', D), undefined);
   assert.strictEqual(type('x^2 + alpha ', D), 'x² + α ');
 });
 
@@ -237,4 +240,15 @@ test('sqrt waits for { or (; √{…} is drawn when } closes it', () => {
   // as text (sticky notes, box labels) it falls back to √(…)
   assert.strictEqual(type('sqrt{(3-k)^2+(4-t)}', null), '√((3-k)²+(4-t))');
   assert.strictEqual(type('sqrt{2}', null), '√2');
+});
+
+test('notes-friendly: lists, bold, identifiers and English words stay', () => {
+  for (const [input, want] of [
+    ['* item ', '* item '], ['**bold**', '**bold**'], ['2*3', '2×3'], ['2**3', '2·3'], ['(a+b)*c', '(a+b)×c'],
+    ['my_name', 'my_name'], ['file_name', 'file_name'], ['x_1', 'x₁'], ['x_max', 'xₘₐₓ'],
+    ['the deg of p ', 'the deg of p '], ['90deg ', '90° '], ['int x = 5 ', 'int x = 5 '], ['int_0', '∫_0'],
+    ['a partial fraction ', 'a partial fraction '], ['8 div 2 ', '8 ÷ 2 '], ['div F ', 'div F '],
+    ['and/or do/dt ', 'and/or do/dt '],
+  ]) assert.strictEqual(type(input, null), want, input);
+  assert.strictEqual(stackOf('do/dt ', null), undefined);
 });

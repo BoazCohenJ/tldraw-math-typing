@@ -111,7 +111,7 @@
     editor.setEditingShape(null);
     editor.setCurrentTool('select');
     const s = editor.getShape(id);
-    if (s && !plain(s.props.richText).trim()) {
+    if (s && !plain(s.props.richText).replace(/\u200B/g, '').trim()) {
       editor.deleteShapes([id]);
       return true;
     }
@@ -127,10 +127,22 @@
     k.moveTo(cont, x, cy - cb.h / 2);
     editor.select(cont);
     editor.setEditingShape(cont);
-    // Start with an invisible zero-width space: tldraw turns "+ " or "- " at the start of a
-    // text box into a bulleted list, which would eat "+ 1" typed after a drawn root.
-    setTimeout(() => { document.execCommand('insertText', false, '​' + (after || '')); }, 60);
+    // Wait until the new box really has the caret (no fixed timer), then start it with an
+    // invisible zero-width space: tldraw turns "+ " or "- " at the start of a text box into a
+    // bulleted list, which would eat "+ 1" typed after a drawn root. Then the content script
+    // types whatever keys arrived in the meantime.
+    let frames = 0;
+    const tryFocus = () => {
+      const el = document.activeElement;
+      if (el && el.isContentEditable && el.closest('.tl-container')) {
+        document.execCommand('insertText', false, '\u200B' + (after || ''));
+        ready();
+      } else if (frames++ < 60) requestAnimationFrame(tryFocus);
+      else ready();
+    };
+    requestAnimationFrame(tryFocus);
   };
+  const ready = () => document.dispatchEvent(new CustomEvent('mathtyping:ready'));
 
   // ---------------------------------------------------------------- stacked fractions and bounds
   const buildStack = (editor, req, id, p) => {
@@ -397,23 +409,60 @@
     const id = editor.getEditingShapeId();
     const shape = id && editor.getShape(id);
     if (!shape || shape.type !== 'text') return false;
-    editor.markHistoryStoppingPoint('math typing');
-    if (req.type === 'figure') return buildFigure(editor, req, id);
-    const p = caretPoint(editor);
-    if (!p) return false;
-    let res;
-    if (req.type === 'fraction' || req.type === 'bigop') res = buildStack(editor, req, id, p);
-    else if (req.type === 'block') res = buildBlock(editor, req, id, p);
-    else return false;
-    const { k, right, cy } = res;
-    if (k.created.length > 1) editor.groupShapes(k.created, { select: false });
-    if (req.finish) {
-      editor.selectNone();
+    // Work out where to draw before changing anything.
+    const p = req.type === 'figure' ? null : caretPoint(editor);
+    if (req.type !== 'figure' && !p) return false;
+    const mark = editor.markHistoryStoppingPoint('math typing');
+    try {
+      if (req.type === 'figure') {
+        buildFigure(editor, req, id);
+        ready();
+        return true;
+      }
+      let res;
+      if (req.type === 'fraction' || req.type === 'bigop') res = buildStack(editor, req, id, p);
+      else if (req.type === 'block') res = buildBlock(editor, req, id, p);
+      else return false;
+      const { k, right, cy } = res;
+      if (k.created.length > 1) editor.groupShapes(k.created, { select: false });
+      if (req.finish) {
+        editor.selectNone();
+        ready();
+        return true;
+      }
+      carryOn(k, right + k.lineH * 0.12, cy, req.after);
       return true;
+    } catch (err) {
+      // Undo whatever was drawn, and never lose the text: if the text box is gone, put the
+      // typed text back as a new text box where it was.
+      try { if (typeof editor.bailToMark === 'function') editor.bailToMark(mark); } catch (_) { /* keep going */ }
+      if (req.restore && !editor.getEditingShapeId() && p) {
+        try {
+          editor.createShape({
+            type: 'text', x: p.x, y: p.y - 16,
+            props: { ...pick(shape.props), richText: doc(req.restore) },
+          });
+          lastRestored = true;
+        } catch (_) { /* nothing more to do */ }
+      }
+      throw err;
     }
-    carryOn(k, right + k.lineH * 0.12, cy, req.after);
-    return true;
   };
+  let lastRestored = false;
+  const pick = (props) => {
+    const { color, size, font, scale } = props;
+    return { color, size, font, scale, autoSize: true, textAlign: 'start' };
+  };
+
+  // Text boxes left holding only the invisible zero-width space are removed when you leave them.
+  document.addEventListener('mathtyping:cleanup', () => {
+    const editor = findEditor();
+    if (!editor) return;
+    const editing = editor.getEditingShapeId();
+    const ghosts = editor.getCurrentPageShapes().filter((sh) => sh.type === 'text' && sh.id !== editing &&
+      sh.props.richText && !plain(sh.props.richText).replace(/\u200B/g, '').trim());
+    if (ghosts.length) editor.deleteShapes(ghosts.map((sh) => sh.id));
+  });
 
   // tldraw's editor. The anonymous board puts it on window.editor; signed-in files may not,
   // so otherwise it is found through React's internals on the canvas element.
@@ -423,7 +472,8 @@
   const findEditor = () => {
     if (isEditor(window.editor)) return window.editor;
     if (isEditor(window.app)) return window.app;
-    if (found && !found.isDisposed) return found;
+    // (a board switch in tldraw's app leaves the old editor behind: check it is still on screen)
+    if (found && !found.isDisposed && found.getContainer?.()?.isConnected !== false) return found;
     const start = document.activeElement?.closest?.('.tl-container') ? document.activeElement : document.querySelector('.tl-canvas, .tl-container');
     for (let el = start; el; el = el.parentElement) {
       const key = Object.keys(el).find((k) => k.startsWith('__reactFiber$'));
@@ -449,6 +499,7 @@
     try { req = JSON.parse(ev.detail); } catch (_) { return; }
     let ok = false;
     let reason = '';
+    lastRestored = false;
     try {
       const editor = findEditor();
       if (!editor) reason = "couldn't find tldraw's editor on this page";
@@ -458,7 +509,7 @@
       reason = String(err && err.message || err);
       console.warn('[math typing] could not draw it', err);
     }
-    document.dispatchEvent(new CustomEvent('mathtyping:stack-done', { detail: JSON.stringify({ ok, reason, nonce: req.nonce }) }));
+    document.dispatchEvent(new CustomEvent('mathtyping:stack-done', { detail: JSON.stringify({ ok, reason, restored: lastRestored, nonce: req.nonce }) }));
   };
   window.__mathTypingPage = onStack;
   document.addEventListener('mathtyping:stack', onStack);
