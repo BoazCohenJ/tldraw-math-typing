@@ -1,6 +1,6 @@
 # tldraw Math Typing
 
-A Firefox / Zen (and Chrome/Edge) extension for writing maths on [tldraw.com](https://tldraw.com):
+A Firefox / Zen and Chrome / Edge extension for writing maths on [tldraw.com](https://tldraw.com):
 
 - **Symbols as you type**: `sqrt` → √, `x^2` → x², `alpha` → α, `\in` → ∈, `->` → →, and about 150 more.
 - **Real equations on `/draw`**: write a line, end it with `/draw`, and it is laid out with stacked
@@ -25,7 +25,15 @@ Zen doesn't require add-ons to be signed, so the unsigned package can stay insta
 
 For a quick try that lasts until restart: `about:debugging` → This Firefox → Load Temporary Add-on → `manifest.json`.
 
-Chrome/Edge: `chrome://extensions` → Developer mode → Load unpacked → this folder.
+## Install in Chrome or Edge
+1. Build: `node tools/build-chrome.js` (Node 22.2+, no dependencies). It writes `dist/chrome/` and
+   `dist/tldraw-math-typing-chrome-<version>.zip`, with a manifest that leaves out the Firefox-only keys.
+2. Open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode**, click **Load unpacked**
+   and pick `dist/chrome`.
+3. Tabs on tldraw.com that were already open get the extension right away, no reload needed.
+
+The zip is the package for the Chrome Web Store or Edge Add-ons. Loading the repo folder itself also
+works, but Chrome then lists warnings about the Firefox keys.
 
 ## Typing shortcuts
 | Type | Get |
