@@ -137,7 +137,22 @@
     el instanceof HTMLElement && !!el.closest('.tl-container') &&
     (el.tagName === 'TEXTAREA' || el.isContentEditable);
 
-  // The caret's text node and offset (contenteditable), or the textarea itself.
+  // The line (paragraph) the caret is in. tldraw's editor often splits a line into several text
+  // pieces (after edits, undo, formatting), so the text before the caret is read across all of them.
+  const BLOCK = 'p, li, h1, h2, h3, h4, blockquote, pre';
+  const lineOf = (el, node) => {
+    const start = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    const block = start && start.closest(BLOCK);
+    return block && el.contains(block) ? block : el;
+  };
+  const textNodes = (root) => {
+    const out = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) out.push(n);
+    return out;
+  };
+
+  // The caret's text node and offset, the whole line's text before it, or the textarea itself.
   const caretInfo = (el) => {
     if (el && el.tagName === 'TEXTAREA') {
       if (el.selectionStart !== el.selectionEnd) return null;
@@ -150,11 +165,54 @@
     let offset = sel.anchorOffset;
     if (node.nodeType !== Node.TEXT_NODE) {
       const prev = node.childNodes[offset - 1];
-      if (!prev || prev.nodeType !== Node.TEXT_NODE) return { before: '', sel, node: null, offset: 0 };
-      node = prev;
-      offset = prev.data.length;
+      if (!prev || prev.nodeType !== Node.TEXT_NODE) {
+        const block0 = lineOf(el || node, node);
+        if (!prev) return { before: '', sel, node: null, offset: 0, block: block0 };
+        // the caret sits after an element (e.g. a hard break): use the last text node before it
+        const all = textNodes(block0).filter((t) => prev.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_PRECEDING || prev.contains(t));
+        const lastText = all[all.length - 1];
+        if (!lastText) return { before: '', sel, node: null, offset: 0, block: block0 };
+        node = lastText;
+        offset = lastText.data.length;
+      } else {
+        node = prev;
+        offset = prev.data.length;
+      }
     }
-    return { before: node.data.slice(0, offset), sel, node, offset };
+    const block = lineOf(el || node, node);
+    let before = node.data.slice(0, offset);
+    // add the text of earlier pieces of the same line
+    const range = document.createRange();
+    try {
+      range.setStart(block, 0);
+      range.setEnd(node, offset);
+      before = range.toString();
+    } catch (_) { /* keep the single piece */ }
+    return { before, sel, node, offset, block };
+  };
+
+  // The text node and offset `back` characters before the caret, across pieces of the line.
+  const positionBack = (info, back) => {
+    if (back <= info.offset) return { node: info.node, offset: info.offset - back };
+    const nodes = textNodes(info.block);
+    let i = nodes.indexOf(info.node);
+    let left = back - info.offset;
+    while (--i >= 0) {
+      const len = nodes[i].data.length;
+      if (left <= len) return { node: nodes[i], offset: len - left };
+      left -= len;
+    }
+    return nodes.length ? { node: nodes[0], offset: 0 } : { node: info.node, offset: 0 };
+  };
+
+  // Enter runs a command on the whole line: put the caret at the end of the line first.
+  const caretToLineEnd = (el) => {
+    const info = caretInfo(el);
+    if (!info || !info.node || !info.block) return;
+    const nodes = textNodes(info.block);
+    const lastNode = nodes[nodes.length - 1];
+    if (!lastNode || (lastNode === info.node && info.offset === lastNode.data.length)) return;
+    info.sel.collapse(lastNode, lastNode.data.length);
   };
   // The line without the invisible zero-width space a drawn equation leaves at its start.
   const visible = (s) => s.replace(/​/g, '');
@@ -169,8 +227,9 @@
       info.textarea.setSelectionRange(info.pos - length, info.pos);
     } else {
       if (!info.node) return;
+      const start = positionBack(info, length);
       const range = document.createRange();
-      range.setStart(info.node, info.offset - length);
+      range.setStart(start.node, start.offset);
       range.setEnd(info.node, info.offset);
       info.sel.removeAllRanges();
       info.sel.addRange(range);
@@ -463,13 +522,15 @@
     const at = openRootAt(info.before);
     if (at < 0) return hideRootBar();
     const range = document.createRange();
-    range.setStart(info.node, at + 1);
+    const from = positionBack(info, info.before.length - (at + 1));
+    range.setStart(from.node, from.offset);
     range.setEnd(info.node, info.offset);
     let rect = range.getBoundingClientRect();
     if (!rect.width) {
+      const brace = positionBack(info, info.before.length - at);
       const r2 = document.createRange();
-      r2.setStart(info.node, at);
-      r2.setEnd(info.node, at + 1);
+      r2.setStart(brace.node, brace.offset);
+      r2.setEnd(from.node, from.offset);
       const b = r2.getBoundingClientRect();
       rect = { left: b.right, top: b.top, width: b.height * 0.5, height: b.height };
     }
@@ -765,6 +826,14 @@
         !e.isComposing && isEditable(el)) {
       last = null;
       hideHints();
+      if (e.key === 'Enter' && !e.shiftKey) {
+        // a command or /draw line runs as a whole, wherever the caret is in it
+        const peek = caretInfo(el);
+        if (peek && peek.block) {
+          const lineText = visible(peek.block.textContent || '');
+          if (/^\s*[/\\][a-z]/i.test(lineText) || /\s\/draw\s?$/.test(lineText)) caretToLineEnd(el);
+        }
+      }
       const info = caretInfo(el);
       if (e.key === 'Enter' && !e.shiftKey && info) {
         if (/\s\/draw\s?$/.test(visible(info.before)) && drawLine(el, true)) {
