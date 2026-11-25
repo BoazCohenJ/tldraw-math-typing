@@ -31,7 +31,7 @@
     { id: 'draw', label: '/draw at the end of a line draws it as an equation' },
     { id: 'fractions', label: 'Fractions as you type (3//4 → ¾)', off: true },
     { id: 'stacked', label: 'Draw fractions and bounds as you type, no /draw needed', off: true },
-    { id: 'blocks', label: 'Draw //{…} as soon as } closes it, no /draw needed', off: true },
+    { id: 'blocks', label: 'Draw //{…} as soon as } closes it (no /draw needed)' },
     { id: 'braces', label: 'Brace commands (abs{x}, \\frac{a}{b}, vec{v}, bar{x})' },
     { id: 'greek', label: 'Greek letters (alpha, theta…)' },
     { id: 'words', label: 'Math words (pi, inf, deg, int…)' },
@@ -63,48 +63,38 @@
 
   // Whole words, converted when the next space, symbol or Enter is typed.
   const GREEK = {
-    alpha: 'α', beta: 'β', gamma: 'γ', delta: 'Δ', epsilon: 'ε', zeta: 'ζ', eta: 'η',
-    theta: 'θ', kappa: 'κ', lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', rho: 'ρ', sigma: 'Σ',
-    tau: 'τ', phi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
-    Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Pi: 'Π', Sigma: 'Σ', Phi: 'Φ',
-    Psi: 'Ψ', Omega: 'Ω',
+    alpha: 'α', beta: 'β', gamma: 'γ', delta: 'Δ', epsilon: 'ε', theta: 'θ', lambda: 'λ',
+    mu: 'μ', sigma: 'Σ', phi: 'φ', omega: 'ω', Delta: 'Δ', Sigma: 'Σ', Omega: 'Ω',
   };
   const WORDS = {
-    pi: 'π', inf: '∞', deg: '°', div: '÷', int: '∫', iint: '∬', oint: '∮', partial: '∂',
-    nabla: '∇', approx: '≈', forall: '∀', emptyset: '∅',
+    pi: 'π', inf: '∞', deg: '°', div: '÷', int: '∫', partial: '∂', approx: '≈', forall: '∀',
+    emptyset: '∅',
   };
-  const SETS = { NN: 'ℕ', ZZ: 'ℤ', QQ: 'ℚ', RR: 'ℝ', CC: 'ℂ' };
+  const SETS = { NN: 'ℕ', ZZ: 'ℤ', QQ: 'ℚ', RR: 'ℝ' };
 
   // LaTeX names, typed with a backslash: `\in ` -> `∈ `. These cover English words
   // (in, sum, because…) that would misfire without the backslash.
   const LATEX = {
     // Greek, exactly as LaTeX spells them (\delta is lowercase δ, \Delta is Δ)
-    alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ε', zeta: 'ζ',
-    eta: 'η', theta: 'θ', iota: 'ι', kappa: 'κ', lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ',
-    pi: 'π', rho: 'ρ', sigma: 'σ', tau: 'τ', upsilon: 'υ', phi: 'φ', varphi: 'ϕ', chi: 'χ',
-    psi: 'ψ', omega: 'ω', Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
-    Sigma: 'Σ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+    alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', theta: 'θ', lambda: 'λ',
+    mu: 'μ', pi: 'π', sigma: 'σ', phi: 'φ', omega: 'ω', Delta: 'Δ', Sigma: 'Σ', Omega: 'Ω',
     // sets and logic
-    in: '∈', notin: '∉', ni: '∋', subset: '⊂', subseteq: '⊆', supset: '⊃', supseteq: '⊇',
-    cup: '∪', cap: '∩', setminus: '∖', emptyset: '∅', forall: '∀', exists: '∃',
-    nexists: '∄', neg: '¬', not: '¬', land: '∧', and: '∧', lor: '∨', or: '∨',
-    therefore: '∴', because: '∵', N: 'ℕ', Z: 'ℤ', Q: 'ℚ', R: 'ℝ', C: 'ℂ',
+    in: '∈', notin: '∉', subset: '⊂', subseteq: '⊆', cup: '∪', cap: '∩', emptyset: '∅',
+    forall: '∀', exists: '∃', therefore: '∴', because: '∵', N: 'ℕ', Z: 'ℤ', Q: 'ℚ', R: 'ℝ',
     // calculus and operators
-    sum: '∑', prod: '∏', int: '∫', iint: '∬', oint: '∮', partial: '∂', nabla: '∇',
-    infty: '∞', cdot: '·', times: '×', div: '÷', pm: '±', mp: '∓', circ: '∘',
+    sum: '∑', prod: '∏', int: '∫', partial: '∂', infty: '∞', cdot: '·', times: '×', div: '÷',
+    pm: '±', mp: '∓',
     // relations
-    leq: '≤', le: '≤', geq: '≥', ge: '≥', neq: '≠', ne: '≠', approx: '≈', equiv: '≡',
-    sim: '∼', cong: '≅', propto: '∝', ll: '≪', gg: '≫',
+    leq: '≤', le: '≤', geq: '≥', ge: '≥', neq: '≠', ne: '≠', approx: '≈', equiv: '≡', cong: '≅',
     // geometry
     angle: '∠', perp: '⊥', parallel: '∥', triangle: '△', degree: '°',
     // arrows
-    to: '→', gets: '←', leftarrow: '←', rightarrow: '→', leftrightarrow: '↔',
-    implies: '⇒', impliedby: '⇐', iff: '⇔', mapsto: '↦', uparrow: '↑', downarrow: '↓',
+    to: '→', gets: '←', implies: '⇒', iff: '⇔',
     // misc
-    ldots: '…', cdots: '⋯', ell: 'ℓ', hbar: 'ℏ', aleph: 'ℵ',
+    ldots: '…',
   };
 
-    const ACCENTS = { bar: '\u0304', overline: '\u0305', vec: '\u20D7', hat: '\u0302', dot: '\u0307', ddot: '\u0308', tilde: '\u0303' };
+    const ACCENTS = { bar: '\u0304', vec: '\u20D7', hat: '\u0302', dot: '\u0307' };
 
   const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -139,13 +129,18 @@
   };
 
   // Version 2 stopped drawing while typing (use /draw); forget older choices for those groups.
-  const SETTINGS_VERSION = 2;
+  const SETTINGS_VERSION = 3;
   const normalizeSettings = (s) => {
     s = s || {};
     let cats = s.categories || {};
-    if ((s.v || 1) < SETTINGS_VERSION) {
+    if ((s.v || 1) < 2) {
       cats = { ...cats };
       for (const c of CATEGORIES) if (c.off) delete cats[c.id];
+    }
+    // Version 3 turned //{…} blocks back on: nobody types //{ by accident.
+    if ((s.v || 1) < 3) {
+      cats = { ...cats };
+      delete cats.blocks;
     }
     return {
       v: SETTINGS_VERSION,
@@ -240,7 +235,7 @@
       // abs{x} -> |x|
       rules.push([/\\?abs\{([^{}]*)\}$/, (m) => `|${m[1]}|`]);
       // bar{x} -> x̄, vec{v} -> v⃗, hat{x} -> x̂, dot{x} -> ẋ, ddot{x} -> ẍ
-      rules.push([/\\?(bar|overline|vec|hat|dot|ddot|tilde)\{([^{}]*)\}$/, (m) => {
+      rules.push([/\\?(bar|vec|hat|dot)\{([^{}]*)\}$/, (m) => {
         const mark = ACCENTS[m[1]];
         return [...m[2]].map((c) => (/\s/.test(c) ? c : c + mark)).join('');
       }]);

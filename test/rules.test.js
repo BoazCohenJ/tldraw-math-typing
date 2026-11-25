@@ -7,7 +7,7 @@ const MT = globalThis.MathTyping;
 
 // Most tests below were written with every group on, including the as-you-type drawing
 // groups that are off by default since /draw arrived.
-const ALL_ON = { v: 2, categories: { fractions: true, stacked: true, blocks: true } };
+const ALL_ON = { v: 3, categories: { fractions: true, stacked: true, blocks: true } };
 const type = (input, settings = ALL_ON, { flush = false } = {}) => {
   const rules = MT.buildRules(settings);
   let text = '';
@@ -132,7 +132,7 @@ test('bounds on integrals, sums and limits', () => {
   // inline fallback text (used outside plain text shapes)
   assert.strictEqual(type('int_0^1 '), '∫₀¹ ');
   // with stacked shapes off, the old inline scripts apply
-  assert.strictEqual(type('int_0^1', { v: 2, categories: { stacked: false, draw: false } }), '∫₀¹');
+  assert.strictEqual(type('int_0^1', { v: 3, categories: { stacked: false, draw: false } }), '∫₀¹');
 });
 
 test('hints list', () => {
@@ -212,4 +212,11 @@ test('/draw lines: bounds, derivatives and old //{…} blocks', () => {
   assert.strictEqual(flat(MT.parseBlock('dy/dx = 3')), '[dy/dx] = 3');
   assert.strictEqual(flat(MT.parseBlock('and/or')), 'and/or');
   assert.strictEqual(flat(MT.parseBlock('//{x//{x+3}}')), '{[x/x+3]}');
+});
+
+test('//{…} blocks are on by default, also for settings saved before', () => {
+  assert.strictEqual(MT.normalizeSettings(null).categories.blocks, true);
+  assert.strictEqual(MT.normalizeSettings({ v: 2, categories: { blocks: false } }).categories.blocks, true);
+  assert.strictEqual(MT.normalizeSettings({ v: 3, categories: { blocks: false } }).categories.blocks, false);
+  assert.deepStrictEqual(MT.closedBlock('//{3//{x+2}}'), { start: 0, src: '3//{x+2}' });
 });

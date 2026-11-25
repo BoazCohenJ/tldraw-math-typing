@@ -158,13 +158,19 @@
     const nonce = Math.random().toString(36).slice(2);
     document.dispatchEvent(new CustomEvent('mathtyping:stack', { detail: JSON.stringify({ ...req, nonce }) }));
     if (stackResult && stackResult.ok) return true;
-    toast(`Math typing: couldn't draw it: ${(stackResult && stackResult.reason) || 'the page script did not answer'}`, 6000);
+    const why = stackResult ? stackResult.reason || 'an older version is still running in this tab; reload the tab'
+      : 'the page script did not answer; reload the tab';
+    toast(`Math typing: couldn't draw it: ${why}`, 6000);
     return false;
   };
 
   let stackResult = null;
   document.addEventListener('mathtyping:stack-done', (e) => {
-    try { stackResult = JSON.parse(e.detail); } catch (_) {}
+    // Several page scripts can answer (an old version left in the tab): a success wins.
+    try {
+      const r = JSON.parse(e.detail);
+      if (!stackResult || !stackResult.ok) stackResult = r;
+    } catch (_) {}
   });
 
   const stack = (el, info, rep, finish) => {

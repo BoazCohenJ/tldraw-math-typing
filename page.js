@@ -6,8 +6,11 @@
 //   figure    a graph or a geometric shape, under the current text box
 (() => {
   'use strict';
-  if (window.__mathTypingPage) return;
-  window.__mathTypingPage = true;
+  // When the add-on updates, Zen puts the new version into open tabs, but the old page script
+  // stays running there. Take its place so only this version answers.
+  if (typeof window.__mathTypingPage === 'function') {
+    document.removeEventListener('mathtyping:stack', window.__mathTypingPage);
+  }
   document.documentElement.dataset.mathtypingPage = '1';
 
   const doc = (text) => ({
@@ -428,7 +431,7 @@
     return null;
   };
 
-  document.addEventListener('mathtyping:stack', (ev) => {
+  const onStack = (ev) => {
     let req;
     try { req = JSON.parse(ev.detail); } catch (_) { return; }
     let ok = false;
@@ -443,5 +446,7 @@
       console.warn('[math typing] could not draw it', err);
     }
     document.dispatchEvent(new CustomEvent('mathtyping:stack-done', { detail: JSON.stringify({ ok, reason, nonce: req.nonce }) }));
-  });
+  };
+  window.__mathTypingPage = onStack;
+  document.addEventListener('mathtyping:stack', onStack);
 })();
