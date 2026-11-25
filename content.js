@@ -2,6 +2,9 @@
 // Alt+M turns it on/off. Settings live in extension storage and are edited from the toolbar popup.
 (() => {
   'use strict';
+  // Runs once per tab, even when background.js also puts it into a tab that was already open.
+  if (globalThis.__mathTypingContent) return;
+  globalThis.__mathTypingContent = true;
 
   const MT = globalThis.MathTyping;
   const TOOLS = globalThis.MathTools;
