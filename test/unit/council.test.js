@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const root = path.join(__dirname, '..');
+const root = path.join(__dirname, '..', '..', 'src');
 const ctx = vm.createContext({ console: { ...console, log() {}, error() {} }, Math }, { codeGeneration: { strings: false, wasm: false } });
 ctx.window = ctx;
 ctx.globalThis = ctx;
@@ -28,7 +28,7 @@ test('log is base 10 and stays log; ln stays ln', () => {
 test('powers of functions: sin²(x), sin^2(x), sin^-1(x)', () => {
   assert.strictEqual(text('/diff sin²(x)'), 'd/dx (sin(x)²) = 2·cos(x)·sin(x)');
   assert.strictEqual(text('/diff sin^2(x)'), 'd/dx (sin(x)²) = 2·cos(x)·sin(x)');
-  assert.match(text('/calc sin^-1(0.5)'), /^arcsin\(0\.5\) = .*≈ 0\.5235987756$/);
+  assert.match(text('/calc sin^-1(0.5)'), /^arcsin\(0\.5\) = .*≈ 0\.523599$/);
 });
 
 test('numbers next to numbers are a typo; 3×4 is shown as typed', () => {

@@ -29,6 +29,7 @@
     { id: 'roots', label: 'Roots: sqrt{…} drawn with a bar, sqrt(…) inline' },
     { id: 'scripts', label: 'Exponents and indices (x^2, e^{2x}, x_1)' },
     { id: 'draw', label: '/draw at the end of a line draws it as an equation' },
+    { id: 'enterdraw', label: 'Enter lays out a line that has // fractions (no /draw needed)' },
     { id: 'deriv', label: 'Draw d/dx, dy/dx, ∂/∂x stacked as you type the space after' },
     { id: 'bounds', label: 'Draw lim_{…}, ∫_{…}^{…}, ∑_{…}^{…} on the space after' },
     { id: 'fractions', label: 'Fractions as you type (3//4 → ¾)', off: true },
@@ -439,6 +440,14 @@
             }
             num = { k: 'text', s: '' };
           }
+          // sin(x)//x: the function name before the brackets goes on top with them
+          const prevText = items[items.length - 1];
+          const fn = num.k === 'paren' && prevText && prevText.k === 'text' && !prevText.op && prevText.s.match(/([a-zA-Z]{2,})$/);
+          if (fn) {
+            prevText.s = prevText.s.slice(0, -fn[1].length);
+            if (!prevText.s) items.pop();
+            num = row([{ k: 'text', s: fn[1] }, num]);
+          }
           const den = parseOperand();
           items.push({ k: 'frac', num: asRow(num), den: asRow(den) });
           continue;
@@ -531,6 +540,7 @@
     add('braces', 'vec{v}  bar{x}  hat{x}  dot{x}', 'v⃗  x̄  x̂  ẋ');
     add('deriv', 'd/dx  dy/dx  d²y/dx²  ∂/∂x + space', 'drawn stacked at once');
     add('draw', 'y = x//{x+3} + 4 /draw', 'the line as an equation');
+    add('enterdraw', 'sin(x)//x = 1 + Enter', 'a line with // is laid out when you finish it');
     add('draw', '{a+b}//{c//d} /draw', 'fractions can nest; {…} groups');
     add('draw', 'int_0^1 x dx /draw', '∫ with 0 below, 1 above');
     add('draw', 'sum_{i=1}^n i /draw', '∑ with bounds');

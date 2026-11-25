@@ -1,0 +1,24 @@
+{
+  "name": "math-typing-for-tldraw",
+  "version": "1.8.0",
+  "description": "Type maths on tldraw.com: symbols as you type, real fractions and roots, a calculator, graphs and shapes.",
+  "private": true,
+  "scripts": {
+    "test": "node --test \"test/unit/*.test.js\"",
+    "build": "node scripts/build.mjs",
+    "lint": "node scripts/build.mjs firefox && web-ext lint --source-dir dist/firefox",
+    "start:firefox": "node scripts/build.mjs firefox && web-ext run --source-dir dist/firefox --start-url https://www.tldraw.com",
+    "e2e:zen": "node scripts/build.mjs firefox && node test/e2e/zen.cjs",
+    "e2e:chrome": "node scripts/build.mjs chrome && node test/e2e/chrome.cjs",
+    "screenshots": "node scripts/build.mjs chrome && node store/make-screenshots.cjs",
+    "fonts": "python tools/build-fonts.py"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1",
+    "selenium-webdriver": "^4.27.0",
+    "web-ext": "^8.3.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

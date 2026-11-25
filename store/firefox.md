@@ -4,7 +4,10 @@
 - [ ] Permission from BoazCohenJ to publish this fork (the original repo has no licence), or a licence added there.
 - [ ] Decide listed (public) or unlisted (signed, link-only).
 - [ ] Untick Android at submission (no touch-keyboard support).
-- [ ] Upload screenshots (1280×800) of: the popup, a drawn equation, a graph, the suggestion card.
+- [ ] An addons.mozilla.org developer account (free).
+- [ ] Upload `dist/math-typing-firefox-<version>.zip` (from `npm run build`), and the source zip if asked
+      (the package is the source; no bundler).
+- [ ] Screenshots (1280×800): `store/screenshots/1-calculus.png` … `5-popup.png`.
 
 ## Listing
 **Name:** Math Typing for tldraw
@@ -28,6 +31,7 @@ Not made by or affiliated with tldraw. Works only on tldraw.com.
 **Homepage / support:** https://github.com/yotam1001/tldraw-math-typing
 
 ## Privacy policy
+Full text: `store/privacy.md` (https://github.com/yotam1001/tldraw-math-typing/blob/main/store/privacy.md).
 Math Typing collects no data and makes no network requests. It runs only on tldraw.com pages, works
 entirely in the browser, and stores its settings with `storage.local`. The manifest declares
 `data_collection_permissions: { required: ["none"] }`.
@@ -41,10 +45,9 @@ entirely in the browser, and stores its settings with `storage.local`. The manif
   own files.
 - **cas-worker.js:** the calculator commands run in a Worker started by the background script, so the
   algebra library only loads when a command is used and a slow command is stopped after 6 seconds.
-- **vendor/nerdamer:** unmodified nerdamer 1.1.13 (MIT, https://github.com/jiggzson/nerdamer), used for
-  symbolic derivatives, integrals and solving. The linter flags `new Function` in nerdamer.core.js
-  (its numeric `build()`). Our commands avoid the paths that use it, and Firefox's extension CSP
-  blocks it anyway; if reached, it throws and the command reports an error.
+- **vendor/nerdamer:** nerdamer 1.1.13 (MIT, https://github.com/jiggzson/nerdamer), used for symbolic
+  derivatives, integrals and solving. One change: its `build()`, which compiled code with `new Function`,
+  now throws (Math Typing never calls it). `web-ext lint` reports 0 errors and 0 warnings.
 - **page.js (world: MAIN):** tldraw only exposes its editor object to the page. page.js uses it to
   create text and line shapes for drawn equations, graphs and shapes, and talks to the content script
   through DOM CustomEvents with JSON strings. On boards where tldraw doesn't put the editor on
@@ -52,4 +55,4 @@ entirely in the browser, and stores its settings with `storage.local`. The manif
   else.
 - **Permissions:** `storage` (settings), `scripting` (to start in tldraw tabs that were open before
   install, update or Allow), host access to tldraw.com only.
-- **Tests:** `node --test` in the repository.
+- **Tests:** `npm test` (unit) and `npm run e2e:zen` / `npm run e2e:chrome` (real tldraw.com) in the repository.

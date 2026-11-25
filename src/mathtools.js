@@ -319,7 +319,7 @@
   const fmtNum = (v) => {
     if (!Number.isFinite(v)) return v > 0 ? '∞' : v < 0 ? '−∞' : 'undefined';
     if (Number.isInteger(v)) return v < 0 ? `−${-v}` : String(v);
-    const s = String(Number(v.toPrecision(10)));
+    const s = String(Number(v.toPrecision(6)));
     return s.startsWith('-') ? `−${s.slice(1)}` : s;
   };
 
@@ -1208,16 +1208,18 @@
       const w = [b[0] - v[0], b[1] - v[1]];
       return Math.acos(Math.max(-1, Math.min(1, (u[0] * w[0] + u[1] * w[1]) / (Math.hypot(...u) * Math.hypot(...w)))));
     };
-    const triangle = (a, b, c, opts = {}) => {
-      if (a + b <= c || a + c <= b || b + c <= a) throw new Error(`${fmt(a)}, ${fmt(b)}, ${fmt(c)} can't make a triangle`);
-      // base c along the x axis, A at origin, B at (c, 0)
+    // Sides in order around the triangle, the way a question names them: AB, BC, CA.
+    const triangle = (ab, bc, ca) => {
+      const [a, b, c] = [bc, ca, ab];
+      if (ab + bc <= ca || ab + ca <= bc || bc + ca <= ab) throw new Error(`${fmt(ab)}, ${fmt(bc)}, ${fmt(ca)} can't make a triangle`);
+      // A at the origin, B along the x axis
       const A = [0, 0];
-      const B = [c, 0];
-      const x = (b * b + c * c - a * a) / (2 * c);
-      const C = [x, Math.sqrt(Math.max(0, b * b - x * x))];
+      const B = [ab, 0];
+      const x = (ab * ab + ca * ca - bc * bc) / (2 * ab);
+      const C = [x, Math.sqrt(Math.max(0, ca * ca - x * x))];
       const pts = [A, B, C];
       poly(pts);
-      sideLabels(pts, [fmt(c), fmt(a), fmt(b)]);
+      sideLabels(pts, [fmt(ab), fmt(bc), fmt(ca)]);
       vertexLabels(pts, ['A', 'B', 'C']);
       for (const [v, p, q] of [[A, B, C], [B, C, A], [C, A, B]]) {
         const ang = angleAt(v, p, q);
@@ -1230,7 +1232,7 @@
           angleArc(v, p, q, deg(ang));
         }
       }
-      return `triangle ${fmt(a)}, ${fmt(b)}, ${fmt(c)}`;
+      return `triangle AB = ${fmt(ab)}, BC = ${fmt(bc)}, CA = ${fmt(ca)}`;
     };
     const regular = (n, side) => {
       const R = side / (2 * Math.sin(Math.PI / n));
@@ -1277,10 +1279,18 @@
     } else if (/^right\s*triangle/.test(s)) {
       const a = nums[0] || 3;
       const b = nums[1] || 4;
-      triangle(b, a, Math.hypot(a, b), { right: true });
-      caption = `right triangle ${fmt(a)}, ${fmt(b)}, ${fmt(Math.hypot(a, b))}`;
+      // legs AB and BC: the right angle is at B
+      triangle(a, b, Math.hypot(a, b));
+      caption = `right triangle AB = ${fmt(a)}, BC = ${fmt(b)}, CA = ${fmt(Math.hypot(a, b))}`;
     } else if (/^(equilateral\s*)?triangle/.test(s)) {
-      if (nums.length >= 3) caption = triangle(nums[0], nums[1], nums[2]);
+      // triangle AB=3 BC=4 AC=5 (any order), or triangle 3 4 5 meaning AB, BC, CA
+      const named = {};
+      for (const m of s.matchAll(/\b([abc])([abc])\s*=\s*(\d+(?:\.\d+)?)/g)) {
+        const key = [m[1], m[2]].sort().join('');
+        if (m[1] !== m[2]) named[key] = Number(m[3]);
+      }
+      if (named.ab && named.bc && named.ac) caption = triangle(named.ab, named.bc, named.ac);
+      else if (nums.length >= 3) caption = triangle(nums[0], nums[1], nums[2]);
       else {
         const a = nums[0] || 4;
         caption = triangle(a, a, a);

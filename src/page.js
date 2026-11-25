@@ -119,12 +119,19 @@
   };
 
   // Starts a new text box at (x, centre y) and puts the caret in it.
-  const carryOn = (k, x, cy, after) => {
+  const carryOn = (k, x, cy, after, row) => {
     const { editor } = k;
     const cont = k.text('', 1);
     k.created.pop();
     const cb = k.bounds(cont);
     k.moveTo(cont, x, cy - cb.h / 2);
+    // Enter in this box starts the next line at the left edge, under the whole row.
+    if (row) {
+      editor.updateShape({
+        id: cont, type: 'text',
+        meta: { mtLeft: row.left, mtRowBottom: row.bottom, mtOrigin: row.origin, mtOriginLine: row.originLine, mtRowIds: row.ids },
+      });
+    }
     editor.select(cont);
     editor.setEditingShape(cont);
     // Wait until the new box really has the caret (no fixed timer), then start it with an
@@ -143,6 +150,64 @@
     requestAnimationFrame(tryFocus);
   };
   const ready = () => document.dispatchEvent(new CustomEvent('mathtyping:ready'));
+
+  // A new text box at the start of the next line (left edge x, top y), with the caret in it.
+  const nextLine = (editor, style, x, y) => {
+    const id = newId();
+    editor.createShape({ id, type: 'text', x, y, props: { ...pick(style), richText: doc('') }, meta: { mtLeft: x, mtRowBottom: y, mtFresh: true } });
+    editor.select(id);
+    editor.setEditingShape(id);
+    let frames = 0;
+    const tryFocus = () => {
+      const el = document.activeElement;
+      if (el && el.isContentEditable && el.closest('.tl-container')) {
+        document.execCommand('insertText', false, '\u200B');
+        ready();
+      } else if (frames++ < 60) requestAnimationFrame(tryFocus);
+      else ready();
+    };
+    requestAnimationFrame(tryFocus);
+  };
+
+  // Where the current line starts (x) and how low it reaches, for the text box being edited.
+  const rowOf = (editor, id) => {
+    const s = editor.getShape(id);
+    const b = editor.getShapePageBounds(id);
+    return {
+      left: s.meta && typeof s.meta.mtLeft === 'number' ? s.meta.mtLeft : b.x,
+      bottom: Math.max(b.y + b.h, s.meta && typeof s.meta.mtRowBottom === 'number' ? s.meta.mtRowBottom : -Infinity),
+    };
+  };
+
+  // A drawing that reaches above its line would cover the line above: move the whole row down.
+  // The row is the text before the drawing (a line of the box it started in), earlier drawings on
+  // the row, and the text box continuing it. In a box of several lines, empty lines are added above
+  // the row instead, so earlier lines stay put. Returns how far the row moved.
+  const lowerRow = (editor, ctx, over) => {
+    if (!(over > 0.5)) return 0;
+    const { lineH } = ctx;
+    const move = (ids, dy) => {
+      for (const sid of ids) {
+        const sh = sid && editor.getShape(sid);
+        if (sh) editor.updateShape({ id: sid, type: sh.type, y: sh.y + dy });
+      }
+    };
+    let dy = over;
+    const origin = ctx.origin && editor.getShape(ctx.origin);
+    if (origin && ctx.originLine > 0 && origin.props.richText) {
+      // empty lines above the row's line in the box it started in
+      const n = Math.ceil(over / lineH);
+      const content = origin.props.richText.content || [];
+      const at = Math.min(ctx.originLine, content.length);
+      const blanks = Array.from({ length: n }, () => ({ type: 'paragraph' }));
+      editor.updateShape({ id: origin.id, type: 'text', props: { richText: { ...origin.props.richText, content: [...content.slice(0, at), ...blanks, ...content.slice(at)] } } });
+      dy = n * lineH;
+    } else if (origin) {
+      move([origin.id], dy);
+    }
+    move([...(ctx.rowIds || []), ...(ctx.current && ctx.current !== ctx.origin ? [ctx.current] : []), ...ctx.created], dy);
+    return dy;
+  };
 
   // ---------------------------------------------------------------- stacked fractions and bounds
   const buildStack = (editor, req, id, p) => {
@@ -200,6 +265,7 @@
   // ---------------------------------------------------------------- equation blocks
   // Boxes measure themselves around a horizontal axis: w, up (above), down (below).
   const buildBlock = (editor, req, id, p) => {
+    // a box started by Enter on a new line (not one continuing a row after a drawing)
     const k = kit(editor, editor.getShape(id).props);
     leaveEditing(editor, id);
     const { lineH } = k;
@@ -409,6 +475,18 @@
     const id = editor.getEditingShapeId();
     const shape = id && editor.getShape(id);
     if (!shape || shape.type !== 'text') return false;
+    if (req.type === 'newline') {
+      // Only for boxes that continue a line after a drawing.
+      if (!shape.meta || typeof shape.meta.mtLeft !== 'number') return false;
+      if (req.check) return true;
+      const row = rowOf(editor, id);
+      const style = shape.props;
+      const lineH = editor.getShapePageBounds(id).h;
+      leaveEditing(editor, id);
+      nextLine(editor, style, row.left, row.bottom + lineH * 0.15);
+      return true;
+    }
+    const row0 = rowOf(editor, id);
     // Work out where to draw before changing anything.
     const p = req.type === 'figure' ? null : caretPoint(editor);
     if (req.type !== 'figure' && !p) return false;
@@ -416,21 +494,54 @@
     try {
       if (req.type === 'figure') {
         buildFigure(editor, req, id);
-        ready();
+        if (req.next) {
+          const fb = editor.getSelectionPageBounds && editor.getSelectionPageBounds();
+          const lineH = 32 * (shape.props.scale || 1);
+          nextLine(editor, shape.props, row0.left, (fb ? fb.y + fb.h : row0.bottom) + lineH * 0.6);
+        } else ready();
         return true;
       }
       let res;
       if (req.type === 'fraction' || req.type === 'bigop') res = buildStack(editor, req, id, p);
       else if (req.type === 'block') res = buildBlock(editor, req, id, p);
       else return false;
-      const { k, right, cy } = res;
+      const { k, right } = res;
+      let { cy } = res;
+      // Where this row started: the first drawing on a line remembers its box and line index;
+      // a box that continues a row passes the same on.
+      const meta = shape.meta || {};
+      const isCont = typeof meta.mtOrigin === 'string' || Array.isArray(meta.mtRowIds);
+      const origin = isCont ? meta.mtOrigin : (editor.getShape(id) ? id : null);
+      const originLine = isCont ? meta.mtOriginLine : req.lineIndex || 0;
+      let top = Infinity;
+      for (const sid of k.created) {
+        const b = editor.getShapePageBounds(sid);
+        if (b) top = Math.min(top, b.y);
+      }
+      const dy = lowerRow(editor, {
+        lineH: k.lineH, origin, originLine, rowIds: meta.mtRowIds || [],
+        current: editor.getShape(id) ? id : null, created: k.created,
+      }, (p.y - k.lineH * 0.55) - top);
+      cy += dy;
       if (k.created.length > 1) editor.groupShapes(k.created, { select: false });
+      const groupOf = (sid) => {
+        const sh = editor.getShape(sid);
+        return sh && sh.parentId && sh.parentId.startsWith('shape:') ? sh.parentId : sid;
+      };
+      const rowIds = [...(meta.mtRowIds || []), ...new Set(k.created.map(groupOf))];
+      // how low this row reaches now (the drawing may hang below the text)
+      let bottom = row0.bottom + dy;
+      for (const sid of k.created) {
+        const b = editor.getShapePageBounds(sid);
+        if (b) bottom = Math.max(bottom, b.y + b.h);
+      }
       if (req.finish) {
         editor.selectNone();
-        ready();
+        if (req.next) nextLine(editor, shape.props, row0.left, bottom + k.lineH * 0.15);
+        else ready();
         return true;
       }
-      carryOn(k, right + k.lineH * 0.12, cy, req.after);
+      carryOn(k, right + k.lineH * 0.12, cy, req.after, { left: row0.left, bottom, origin, originLine, ids: rowIds });
       return true;
     } catch (err) {
       // Undo whatever was drawn, and never lose the text: if the text box is gone, put the

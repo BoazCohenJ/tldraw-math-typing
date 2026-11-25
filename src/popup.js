@@ -78,7 +78,7 @@
     ['powers', 'Powers & roots', ['scripts', 'roots', 'fractions']],
     ['greek', 'Greek & sets', ['greek', 'sets', 'words']],
     ['latex', 'LaTeX & braces', ['latex', 'braces']],
-    ['draw', 'Drawing', ['draw', 'deriv', 'bounds', 'blocks', 'stacked']],
+    ['draw', 'Drawing', ['draw', 'enterdraw', 'deriv', 'bounds', 'blocks', 'stacked']],
   ];
   let chip = 'all';
   const renderChips = () => {
@@ -201,7 +201,7 @@
   };
 
   // ---------------------------------------------------------------- settings
-  const DRAW_CATS = ['deriv', 'bounds', 'blocks', 'stacked', 'fractions'];
+  const DRAW_CATS = ['enterdraw', 'deriv', 'bounds', 'blocks', 'stacked', 'fractions'];
   const renderCategories = () => {
     const draw = $('cats-draw');
     const typing = $('cats-typing');

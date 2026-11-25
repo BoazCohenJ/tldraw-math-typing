@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const root = path.join(__dirname, '..');
+const root = path.join(__dirname, '..', '..', 'src');
 const ctx = vm.createContext({ console, Math }, { codeGeneration: { strings: false, wasm: false } });
 ctx.window = ctx;
 ctx.globalThis = ctx;
@@ -19,8 +19,8 @@ const run = (line) => ctx.MathTools.runCommand('/' + line);
 const text = (line) => run(line).text;
 
 const CASES = [
-  ['calc 2^10/3', '2¹⁰/3 = 1024/3 ≈ 341.3333333'],
-  ['calc 2¹⁰/3', '2¹⁰/3 = 1024/3 ≈ 341.3333333'],
+  ['calc 2^10/3', '2¹⁰/3 = 1024/3 ≈ 341.333'],
+  ['calc 2¹⁰/3', '2¹⁰/3 = 1024/3 ≈ 341.333'],
   ['calc 3! + 4', '3! + 4 = 10'],
   ['calc sin(pi/6)', 'sin(π/6) = 1/2 ≈ 0.5'],
   ['diff x^3 sin(x)', 'd/dx (x³·sin(x)) = 3x²·sin(x) + x³·cos(x)'],
@@ -31,11 +31,11 @@ const CASES = [
   ['integrate 1/(1+x^2)', '∫ 1/(x² + 1) dx = arctan(x) + C'],
   ['integrate x^2 from 0 to 3', '∫₀³ x² dx = 9'],
   ['integrate sin(x) from 0 to pi', '∫ from 0 to π sin(x) dx = 2'],
-  ['integrate e^(-x^2) from 0 to 1', '∫₀¹ e^(−x²) dx = 0.7468241328'],
+  ['integrate e^(-x^2) from 0 to 1', '∫₀¹ e^(−x²) dx = 0.746824'],
   ['solve x^2-5x+6=0', 'x² − 5x + 6 = 0  ⇒  x = 2 or x = 3'],
   ['solve 2x+3=7', '2x + 3 = 7  ⇒  x = 2'],
-  ['solve x^3=2', 'x³ = 2  ⇒  x = 1.25992105'],
-  ['solve cos(x)=x', 'cos(x) = x  ⇒  x = 0.7390851332'],
+  ['solve x^3=2', 'x³ = 2  ⇒  x = 1.25992'],
+  ['solve cos(x)=x', 'cos(x) = x  ⇒  x = 0.739085'],
   ['solve x^2=-1', 'x² = −1  ⇒  no real solution'],
   ['simplify (x^2-1)/(x-1)', '(x² − 1)/(x − 1) = x + 1'],
   ['factor x^2-5x+6', 'x² − 5x + 6 = (x − 2)·(x − 3)'],
@@ -76,12 +76,12 @@ test('plots', () => {
 
 test('shapes', () => {
   const t = run('draw triangle 3 4 5');
-  assert.strictEqual(t.caption, 'triangle 3, 4, 5');
+  assert.strictEqual(t.caption, 'triangle AB = 3, BC = 4, CA = 5');
   const texts = t.figure.items.filter((i) => i.kind === 'text').map((i) => i.text);
   for (const want of ['3', '4', '5', 'A', 'B', 'C', '36.87°', '53.13°']) assert.ok(texts.includes(want), want);
   // the right angle gets a square mark, not a label
   assert.ok(!texts.includes('90°'));
-  assert.strictEqual(run('draw right triangle 3 4').caption, 'right triangle 3, 4, 5');
+  assert.strictEqual(run('draw right triangle 3 4').caption, 'right triangle AB = 3, BC = 4, CA = 5');
   assert.throws(() => run('draw triangle 1 2 5'), /can't make a triangle/);
   assert.ok(run('draw circle 3').figure.items.some((i) => i.kind === 'ellipse' && i.rx === 3));
   assert.strictEqual(run('draw rectangle 3 by 5').caption, 'rectangle 3 × 5');
@@ -96,7 +96,7 @@ test('/draw with an equation in x and y plots it; braces are optional', () => {
   assert.strictEqual(run2('/plot{x^2+y^2=25}').caption, 'x² + y² = 25');
   assert.strictEqual(run2('/draw{x^2+y^2=25}').caption, 'x² + y² = 25');
   assert.strictEqual(run2('/calc{2^10}').text, '2¹⁰ = 1024');
-  assert.strictEqual(run2('/draw{triangle 3 4 5}').caption, 'triangle 3, 4, 5');
+  assert.strictEqual(run2('/draw{triangle 3 4 5}').caption, 'triangle AB = 3, BC = 4, CA = 5');
   // other /draw{…} content is an equation to lay out
   assert.strictEqual(JSON.stringify(run2('/draw{a//b = c}')), JSON.stringify({ equation: 'a//b = c' }));
   assert.strictEqual(JSON.stringify(run2('/draw{x//{x+3} + 4}')), JSON.stringify({ equation: 'x//{x+3} + 4' }));

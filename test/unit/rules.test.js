@@ -2,7 +2,7 @@
 // Simulates typing one character at a time, the way content.js applies replacements.
 const test = require('node:test');
 const assert = require('node:assert');
-require('../rules.js');
+require('../../src/rules.js');
 const MT = globalThis.MathTyping;
 
 // Most tests below were written with every group on, including the as-you-type drawing
@@ -251,4 +251,12 @@ test('notes-friendly: lists, bold, identifiers and English words stay', () => {
     ['and/or do/dt ', 'and/or do/dt '],
   ]) assert.strictEqual(type(input, null), want, input);
   assert.strictEqual(stackOf('do/dt ', null), undefined);
+});
+
+test('a function name before brackets goes on top of the fraction: sin(x)//x', () => {
+  const flat = (n) => (n.k === 'row' ? n.items.map(flat).join('') : n.k === 'text' ? n.s
+    : n.k === 'frac' ? `[${flat(n.num)}/${flat(n.den)}]` : n.k === 'paren' ? `(${flat(n.row)})` : n.k === 'group' ? flat(n.row) : '?');
+  assert.strictEqual(flat(MT.parseBlock('sin(x)//x = 1')), '[sin(x)/x] = 1');
+  assert.strictEqual(flat(MT.parseBlock('2 ln(x)//x')), '2 [ln(x)/x]');
+  assert.strictEqual(flat(MT.parseBlock('(x+1)//2')), '[x+1/2]');
 });

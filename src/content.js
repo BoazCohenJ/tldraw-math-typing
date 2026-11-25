@@ -56,9 +56,11 @@
   } catch (_) {}
   // The popup asks whether this tab is running (for its status line).
   try {
-    ext.runtime.onMessage.addListener((msg) => {
-      if (dead || !msg || msg.type !== 'mathtyping:ping') return undefined;
-      return Promise.resolve({ ok: true, version: VERSION, enabled: settings.enabled });
+    // sendResponse (not a returned Promise) works in both Firefox and Chrome.
+    ext.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (dead || !msg || msg.type !== 'mathtyping:ping') return false;
+      sendResponse({ ok: true, version: VERSION, enabled: settings.enabled });
+      return false;
     });
   } catch (_) {}
 
@@ -270,12 +272,12 @@
   });
 
   // Sends a drawing request to page.js. Returns its answer (the reply is synchronous).
-  const askPage = (req) => {
+  const askPage = (req, { quiet = false } = {}) => {
     stackResult = null;
     pendingNonce = Math.random().toString(36).slice(2);
     document.dispatchEvent(new CustomEvent('mathtyping:stack', { detail: JSON.stringify({ ...req, nonce: pendingNonce }) }));
     const res = stackResult || { ok: false, reason: 'the page script did not answer; reload the tab' };
-    if (!res.ok) {
+    if (!res.ok && !quiet) {
       const why = stackResult ? res.reason || 'an older version is still running in this tab; reload the tab' : res.reason;
       toast(`Math typing: couldn't draw it: ${why}`, 6000);
     }
@@ -287,11 +289,16 @@
   let busy = false;
   let held = '';
   let busyTimer = 0;
-  const startBusy = () => {
+  const startBusy = (ms = 1500) => {
     busy = true;
     held = '';
     clearTimeout(busyTimer);
-    busyTimer = setTimeout(endBusy, 1500); // never hold keys for longer than this
+    busyTimer = setTimeout(endBusy, ms); // never hold keys for longer than this
+  };
+  // A new line after the caret, made by the editor itself (as Enter would).
+  const newLine = () => {
+    applying = true;
+    try { document.execCommand('insertParagraph', false); } finally { applying = false; }
   };
   const endBusy = () => {
     if (!busy) return;
@@ -306,8 +313,18 @@
   };
   document.addEventListener('mathtyping:ready', () => setTimeout(endBusy, 0));
 
-  const stack = (el, info, rep, finish) => {
+  // Which line of the text box this is (0 = first), and whether a drawing is taller than a line.
+  const lineIndexOf = (info) => {
+    if (!info.block || !info.block.parentElement) return 0;
+    return [...info.block.parentElement.children].indexOf(info.block);
+  };
+  const isTall = (st) => (st.type === 'bigop' && !!st.upper) ||
+    (st.type === 'block' && /"k":"(frac|bigop)"/.test(JSON.stringify(st.tree)));
+
+  const stack = (el, info, rep, finish, next = false) => {
     const pre = rep.stack.pre || '';
+    const lineIndex = lineIndexOf(info);
+    const room = isTall(rep.stack) && lineIndex > 0;
     const removed = info.before.slice(info.before.length - rep.length + pre.length);
     const restore = rep.text.slice(pre.length) || removed;
     replaceBeforeCaret(info, rep.length - pre.length, '');
@@ -317,7 +334,7 @@
     startBusy();
     // Let tldraw take in the deletion before page.js reads the caret position.
     requestAnimationFrame(() => {
-      const res = askPage({ ...rep.stack, finish: !!finish, restore });
+      const res = askPage({ ...rep.stack, finish: !!finish, next: !!next, restore, room, lineIndex });
       if (res.ok) return;
       // Could not draw it: put the text back (inline form when there is one), unless page.js
       // already recreated it.
@@ -335,7 +352,8 @@
     replaceBeforeCaret(info, info.before.length, caption);
     startBusy();
     requestAnimationFrame(() => {
-      const r = askPage({ type: 'figure', figure: res.figure });
+      // drawn after Enter, so typing carries on on a new line under the figure
+      const r = askPage({ type: 'figure', figure: res.figure, next: true });
       if (!r.ok) {
         const now = caretInfo(el);
         if (now && now.before.endsWith(caption)) replaceBeforeCaret(now, caption.length, original);
@@ -363,6 +381,14 @@
       // Inside an open //{ … } block, fractions wait for the block to close.
       if (inBlock(info.before.slice(0, -1)) &&
           (rep.stack || info.before.slice(info.before.length - rep.length).includes('//'))) break;
+      if (rep.stack && rep.stack.root) {
+        // A root inside a bigger formula (an open { group, or a line with // fractions) is laid
+        // out with the whole line on Enter or /draw: leave it as typed for now.
+        const before = info.before.slice(0, info.before.length - rep.length);
+        let depth = 0;
+        for (const ch of before) depth += ch === '{' ? 1 : ch === '}' ? -1 : 0;
+        if (depth > 0 || before.includes('//')) break;
+      }
       if (rep.stack && allowStack && canStack(el, rep)) {
         stack(el, info, rep, finish);
         return;
@@ -398,11 +424,12 @@
 
   // "… /draw" then space or Enter: the line is drawn as an equation (or, for a plain equation
   // in x and y such as y = 3x² + 2x, as its graph).
-  const drawLine = (el, finish) => {
+  const drawLine = (el, finish, { whole = false } = {}) => {
     if (!settings.categories.draw) return false;
     const info = caretInfo(el);
-    const m = info && visible(info.before).match(/^([\s\S]*?\S)\s+\/draw\s?$/);
-    if (!m) return false;
+    // "… /draw", or (whole) the whole line as it is
+    const m = info && (whole ? [null, visible(info.before).trimEnd()] : visible(info.before).match(/^([\s\S]*?\S)\s+\/draw\s?$/));
+    if (!m || !m[1] || !m[1].trim()) return false;
     if (!canDraw(el)) {
       toast('Math typing: /draw needs a plain text box (T tool)', 5000);
       return true;
@@ -420,7 +447,7 @@
     stack(el, info, {
       length: info.before.length, text: info.before,
       stack: { type: 'block', tree: MT.parseBlock(m[1].trimEnd()), pre: '' },
-    }, finish);
+    }, finish, finish);
     return true;
   };
 
@@ -430,8 +457,8 @@
     const on = settings.categories;
     if (TOOLS.commandKind(info.before) === 'cas') {
       if (!on.cas) return false;
-      runCas(el, info.before);
-      return true;
+      runCas(el, info);
+      return true; // the answer replaces this line, then a new line starts
     }
     let res;
     try {
@@ -452,11 +479,12 @@
       stack(el, info, {
         length: info.before.length, text: info.before,
         stack: { type: 'block', tree: MT.parseBlock(res.equation), pre: '' },
-      }, true);
+      }, true, true);
       return true;
     }
     if (res.text) {
       replaceBeforeCaret(info, info.before.length, res.text);
+      newLine();
       return true;
     }
     if (!canDraw(el)) {
@@ -471,9 +499,24 @@
 
   // Calculator commands run in the background worker (cas-worker.js). The answer replaces the
   // line only if the line is still what was sent.
-  const runCas = async (el, line) => {
+  // The text nodes of a line, as one range (for replacing a line the caret is no longer on).
+  const lineRange = (block) => {
+    const nodes = textNodes(block);
+    if (!nodes.length) return null;
+    const r = document.createRange();
+    r.setStart(nodes[0], 0);
+    const lastNode = nodes[nodes.length - 1];
+    r.setEnd(lastNode, lastNode.data.length);
+    return r;
+  };
+
+  const runCas = async (el, info) => {
+    const line = info.before;
+    const block = info.block;
     last = null;
     hideHints();
+    // keys typed while it works go to the new line after the answer
+    startBusy(7000);
     const slow = setTimeout(() => toast('Math typing: working it out…', 6000), 400);
     let reply;
     try {
@@ -485,15 +528,24 @@
     if (dead) return;
     if (!reply || reply.error || !reply.res || reply.res.text == null) {
       toast(`Math typing: ${(reply && reply.error) || "couldn't work that out"}`, 5000);
+      endBusy();
       return;
     }
     if (toastEl) toastEl.style.display = 'none';
-    const now = document.activeElement === el ? caretInfo(el) : null;
-    if (!now || now.before !== line) {
+    // The command's line, wherever the caret is now.
+    if (!block || !block.isConnected || visible(block.textContent || '').trim() !== visible(line).trim() || document.activeElement !== el) {
       toast('Math typing: the line changed before the answer came back', 4000);
+      endBusy();
       return;
     }
-    replaceBeforeCaret(now, line.length, reply.res.text);
+    const sel = window.getSelection();
+    const r = lineRange(block);
+    if (!r) { endBusy(); return; }
+    sel.removeAllRanges();
+    sel.addRange(r);
+    insertText(reply.res.text);
+    newLine();
+    endBusy();
   };
 
   // ---------------------------------------------------------------- live root bar
@@ -841,19 +893,42 @@
           e.stopPropagation();
           return;
         }
-        if (runCommandLine(el, info)) {
+        const cmd = runCommandLine(el, info);
+        if (cmd) {
           e.preventDefault();
           e.stopPropagation();
           return;
         }
         const rep = MT.findPendingWord(rules, info.before.slice(-300));
         if (rep && rep.stack && canStack(el, rep)) {
-          // A drawn fraction/bound at the end of the text: draw it and stop editing.
+          // A drawn fraction/bound at the end of the line: draw it, then the next line.
           e.preventDefault();
           e.stopPropagation();
-          stack(el, info, rep, true);
+          stack(el, info, rep, true, true);
           return;
         }
+        // A line with // fractions is laid out when you finish it (no /draw needed).
+        const lineNow = visible(info.before);
+        if (settings.categories.enterdraw && /\/\//.test(lineNow) && !/[a-z]+:\/\//i.test(lineNow) &&
+            canDraw(el) && drawLine(el, true, { whole: true })) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        // After a drawing, Enter starts the next line at the left edge, under the drawing.
+        if (canDraw(el) && askPage({ type: 'newline', check: true }, { quiet: true }).ok) {
+          e.preventDefault();
+          e.stopPropagation();
+          convert(el, MT.findPendingWord, { allowStack: false });
+          startBusy();
+          // let tldraw take in the last conversion before this box is closed
+          requestAnimationFrame(() => {
+            if (!askPage({ type: 'newline' }, { quiet: true }).ok) endBusy();
+          });
+          return;
+        }
+        convert(el, MT.findPendingWord, { allowStack: false });
+        return;
       }
       convert(el, MT.findPendingWord, { allowStack: false });
       return;

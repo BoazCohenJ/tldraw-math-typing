@@ -11879,9 +11879,10 @@ var nerdamer = (function (imports) {
                 dependencies[1] = dependencies[1].replace(x, alias);
             }
 
-            var f = new Function(args, (dependencies[1] || '') + f_array[1] + ' return ' + f_array[0] + ';');
-
-            return f;
+            // Math Typing: browser extensions may not compile code from strings (and their content
+            // security policy blocks it anyway), so building a JavaScript function is not available.
+            // This is the only change to nerdamer 1.1.13. Callers catch the error.
+            throw new Error('nerdamer build() is not available in the Math Typing extension');
         }
     };
 

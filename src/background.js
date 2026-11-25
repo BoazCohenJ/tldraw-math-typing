@@ -88,10 +88,14 @@ const runCas = (line, enabled) => {
   });
 };
 
-ext.runtime.onMessage.addListener((msg) => {
-  if (!msg) return undefined;
+// sendResponse + `return true` (not a returned Promise) works in both Firefox and Chrome.
+ext.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg) return false;
+  let job = null;
   // The popup's "Start" button.
-  if (msg.type === 'mathtyping:attach') return attachOpenTabs().then(() => ({ ok: true }));
-  if (msg.type === 'mathtyping:cas') return runCas(String(msg.line || ''), msg.enabled || {});
-  return undefined;
+  if (msg.type === 'mathtyping:attach') job = attachOpenTabs().then(() => ({ ok: true }));
+  if (msg.type === 'mathtyping:cas') job = runCas(String(msg.line || ''), msg.enabled || {});
+  if (!job) return false;
+  job.then(sendResponse, (err) => sendResponse({ error: String((err && err.message) || err) }));
+  return true;
 });

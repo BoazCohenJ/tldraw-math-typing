@@ -1,5 +1,5 @@
 // Prints every non-ASCII character the extension can type, as a JSON array (for build-fonts.py).
-require('../rules.js');
+require('../src/rules.js');
 const MT = globalThis.MathTyping;
 
 const set = new Set();
