@@ -363,7 +363,7 @@
       } else if (it.kind === 'dot') {
         const [x, y] = map(it.x, it.y);
         const r = k.lineH * 0.1;
-        k.ellipse(x - r, y - r, r * 2, r * 2, { fill: 'solid', thin: true });
+        k.ellipse(x - r, y - r, r * 2, r * 2, { fill: 'fill', thin: true, color: it.color });
       } else if (it.kind === 'text') {
         const sid = k.text(it.text, it.scale || 0.6, { color: it.color });
         const b = k.bounds(sid);

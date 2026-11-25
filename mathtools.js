@@ -774,6 +774,74 @@
     return Array.from({ length: max }, (_, i) => pts[Math.round(i * step)]);
   };
 
+  // Roots of h on [a, b]: sign changes on a fine grid, refined by bisection.
+  const rootsOf = (h, a, b, n = 800) => {
+    const out = [];
+    let px = a;
+    let py = h(a);
+    for (let i = 1; i <= n; i++) {
+      const x = a + ((b - a) * i) / n;
+      const y = h(x);
+      if (Number.isFinite(py) && Number.isFinite(y)) {
+        if (py === 0) out.push(px);
+        else if (py * y < 0) {
+          let lo = px;
+          let hi = x;
+          for (let k = 0; k < 60; k++) {
+            const mid = (lo + hi) / 2;
+            if (h(lo) * h(mid) <= 0) hi = mid; else lo = mid;
+          }
+          const r = (lo + hi) / 2;
+          // a real crossing, not a jump across a pole (like tan x)
+          if (Math.abs(h(r)) < 1e-6 * (1 + Math.abs(h(lo)) + Math.abs(h(hi))) || Math.abs(h(r)) < 1e-9) out.push(r);
+        }
+      }
+      px = x;
+      py = y;
+    }
+    return out;
+  };
+
+  // Points where the plotted curves cross, inside the view (at most 12).
+  const intersections = (explicit, implicit, x0, x1, y0, y1) => {
+    const pts = [];
+    const safe = (f) => (x) => { try { return f(x); } catch (_) { return NaN; } };
+    const fy = explicit.map((c) => safe((x) => evaluate(c.f, { x })));
+    for (let i = 0; i < explicit.length; i++) {
+      for (let j = i + 1; j < explicit.length; j++) {
+        for (const x of rootsOf((x) => fy[i](x) - fy[j](x), x0, x1)) pts.push([x, fy[i](x)]);
+      }
+      // a function crossing a curve given by an equation: F(x, f(x)) = 0
+      for (const c of implicit) {
+        const F = safe((x) => evaluate(c.F, { x, y: fy[i](x) }));
+        for (const x of rootsOf(F, x0, x1)) pts.push([x, fy[i](x)]);
+      }
+    }
+    const inView = pts.filter(([x, y]) => Number.isFinite(y) && y >= y0 && y <= y1 && x >= x0 && x <= x1);
+    const unique = [];
+    const tol = (x1 - x0) * 1e-6;
+    for (const p of inView) if (!unique.some((q) => Math.abs(q[0] - p[0]) < tol && Math.abs(q[1] - p[1]) < tol * 10)) unique.push(p);
+    return unique.slice(0, 12);
+  };
+  // If the traced points form a whole circle, its centre and radius (else null).
+  const circleCentre = (pts) => {
+    if (pts.length < 40) return null;
+    let ax = Infinity; let bx = -Infinity; let ay = Infinity; let by = -Infinity;
+    for (const [x, y] of pts) { ax = Math.min(ax, x); bx = Math.max(bx, x); ay = Math.min(ay, y); by = Math.max(by, y); }
+    const cx = (ax + bx) / 2;
+    const cy = (ay + by) / 2;
+    const rs = pts.map(([x, y]) => Math.hypot(x - cx, y - cy));
+    const r = rs.reduce((a, b) => a + b, 0) / rs.length;
+    if (!(r > 0) || Math.abs((bx - ax) - (by - ay)) > r * 0.05) return null;
+    if (rs.some((v) => Math.abs(v - r) > r * 0.03)) return null;
+    // all the way round: points in every quarter
+    const quarters = new Set(pts.map(([x, y]) => (x >= cx ? 1 : 0) + (y >= cy ? 2 : 0)));
+    return quarters.size === 4 ? { x: cx, y: cy, r } : null;
+  };
+
+  // 2 decimals at most, no trailing zeros, −0 as 0
+  const fmtPoint = (v) => fmtNum(Math.abs(v) < 5e-3 ? 0 : Number(v.toFixed(2)));
+
   const plotCmd = (rest) => {
     const { body: b1, params } = takeParams(rest);
     const r = takeRange(b1);
@@ -808,7 +876,7 @@
     // Implicit curves: find where they live on a coarse grid, then trace them finely.
     let equal = false;
     if (implicit.length) {
-      equal = !explicit.length;
+      equal = true; // circles stay round, also next to y = … lines
       let bx0 = Infinity; let bx1 = -Infinity; let by0 = Infinity; let by1 = -Infinity;
       const R = x0 != null ? Math.max(Math.abs(x0), Math.abs(x1)) : 25;
       for (const c of implicit) {
@@ -875,11 +943,15 @@
       flush();
       // keep only the visible parts
     });
+    const centres = [];
     implicit.forEach((c, k) => {
       const F = (x, y) => evaluate(c.F, { x, y });
-      for (const l of marchingSquares(F, x0, x1, y0, y1, 160)) {
+      const lines = marchingSquares(F, x0, x1, y0, y1, 160);
+      for (const l of lines) {
         curves.push({ pts: l, color: COLORS[(explicit.length + k) % COLORS.length] });
       }
+      const centre = circleCentre(lines.flat());
+      if (centre) centres.push({ ...centre, color: COLORS[(explicit.length + k) % COLORS.length] });
     });
 
     // Axes, ticks and labels
@@ -904,6 +976,20 @@
       items.push({ kind: 'text', x: ay, y: t, text: tickLabel(t), scale: 0.5, color: 'grey', align: 'right', valign: 'middle', dx: -5 });
     }
     for (const c of curves) items.push({ kind: 'poly', pts: thin(c.pts, 240), color: c.color, smooth: true });
+    // The centre of each circle, with its coordinates and radius.
+    for (const c of centres) {
+      items.push({ kind: 'dot', x: c.x, y: c.y, color: c.color });
+      items.push({ kind: 'text', x: c.x, y: c.y, text: `(${fmtPoint(c.x)}, ${fmtPoint(c.y)})  r = ${fmtPoint(c.r)}`,
+        scale: 0.5, color: c.color, align: 'left', valign: 'top', dx: 5, dy: 3 });
+    }
+
+    // Where curves cross: a dot and its coordinates.
+    for (const p of intersections(explicit, implicit, x0, x1, y0, y1)) {
+      items.push({ kind: 'dot', x: p[0], y: p[1] });
+      items.push({ kind: 'text', x: p[0], y: p[1], text: `(${fmtPoint(p[0])}, ${fmtPoint(p[1])})`, scale: 0.5,
+        align: 'left', valign: 'bottom', dx: 5, dy: -3 });
+    }
+
     // A small legend when there is more than one curve
     const labels = [...explicit, ...implicit].map((c) => c.label);
     if (labels.length > 1) {

@@ -111,3 +111,22 @@ test('asPlot: equations in x (and y) graph; others do not', () => {
   assert.strictEqual(ctx.MathTools.asPlot('a//b = c'), null);
   assert.strictEqual(ctx.MathTools.asPlot('x^2 + 1'), null);
 });
+
+test('plots mark where curves cross', () => {
+  const pts = (l) => [...run(l).figure.items.filter((i) => i.kind === 'text' && i.text.startsWith('(') && !i.text.includes('r =')).map((i) => i.text)];
+  assert.deepStrictEqual(pts('plot x+2, 4-x'), ['(1, 3)']);
+  assert.deepStrictEqual(pts('plot x^2, 2x+3'), ['(−1, 1)', '(3, 9)']);
+  assert.deepStrictEqual(pts('plot x^2+y^2=25, y=x'), ['(−3.54, −3.54)', '(3.54, 3.54)']);
+  assert.deepStrictEqual(pts('plot sin(x)'), []);
+  assert.deepStrictEqual(pts('plot tan(x), 0 from -3 to 3'), ['(0, 0)']); // no fake points at the poles ±π/2
+  assert.ok(run('plot x+2, 4-x').figure.items.some((i) => i.kind === 'dot' && Math.abs(i.x - 1) < 1e-9));
+});
+
+test('circles get their centre marked', () => {
+  const centre = (l) => [...run(l).figure.items.filter((i) => i.kind === 'text' && i.text.includes('r =')).map((i) => i.text)];
+  assert.deepStrictEqual(centre('plot x^2+y^2=25'), ['(0, 0)  r = 5']);
+  assert.deepStrictEqual(centre('plot x^2-6x+y^2+t=0 where t=5'), ['(3, 0)  r = 2']);
+  assert.deepStrictEqual(centre('plot (x-1)^2+(y+2)^2=9, y=x'), ['(1, −2)  r = 3']);
+  assert.deepStrictEqual(centre('plot x^2/9+y^2/4=1'), []); // an ellipse is not a circle
+  assert.deepStrictEqual(centre('plot sin(x)'), []);
+});
