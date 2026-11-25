@@ -103,3 +103,11 @@ test('/draw with an equation in x and y plots it; braces are optional', () => {
   // backslash works like slash
   assert.strictEqual(run2('\\plot{sin(x)}').caption, 'y = sin(x)');
 });
+
+test('asPlot: equations in x (and y) graph; others do not', () => {
+  assert.strictEqual(ctx.MathTools.asPlot('y = 3x^2 + 2x').caption, 'y = 3x² + 2x');
+  assert.strictEqual(ctx.MathTools.asPlot('y = x//{x+3}').caption, 'y = x/(x + 3)');
+  assert.strictEqual(ctx.MathTools.asPlot('y = 3//4 + 1'), null);
+  assert.strictEqual(ctx.MathTools.asPlot('a//b = c'), null);
+  assert.strictEqual(ctx.MathTools.asPlot('x^2 + 1'), null);
+});

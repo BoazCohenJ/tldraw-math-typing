@@ -1090,7 +1090,8 @@
     if (sides.length !== 2) return null;
     let vars;
     try { vars = new Set(sides.flatMap((side) => [...freeVars(parse(side))])); } catch (_) { return null; }
-    if (!vars.size || ![...vars].every((v) => v === 'x' || v === 'y')) return null;
+    // needs an x: "y = 3//4 + 1" is an equation to lay out, not a flat line
+    if (!vars.has('x') || ![...vars].every((v) => v === 'x' || v === 'y')) return null;
     return plotCmd(text);
   };
 

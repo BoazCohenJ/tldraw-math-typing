@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "tldraw Math Typing",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Math for tldraw: typing shortcuts (sqrt → √, x^2 → x², alpha → α), real stacked fractions and equations, and a calculator, grapher and shape drawer you type into text boxes.",
   "icons": {
     "48": "icons/icon.svg",
