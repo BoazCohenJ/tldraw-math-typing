@@ -77,7 +77,7 @@ modes (draw every `3//4` as you type, or turn it into ¾).
 | `/integrate x^2`, `/integrate x^2 from 0 to 3` | `x³/3 + C`, `9` |
 | `/solve x^2-5x+6=0` | `x = 2 or x = 3` (at most 6 roots shown) |
 | `/simplify`, `/factor`, `/expand` | `(x − 2)·(x − 3)` … |
-| `/plot sin(x), cos(x) from -pi to pi` | a graph with crossing points marked |
+| `/plot sin(x), cos(x) from -pi to pi`, `/plot f(x)=x^2, g(x)=2x`, `/plot x^2 and 2x` | a graph with crossing points marked (separate curves with `,` `;` `&` or `and`) |
 | `/plot x^2+y^2=25, y=x`, `/plot x^2-6x+y^2+t=0 where t=5` | circles get their centre and radius |
 | `/draw triangle 3 4 5`, `right triangle 3 4`, `circle 3`, `ellipse 3 2`, `square 4`, `rectangle 3 by 5`, `hexagon 2`, `polygon 7 2`, `angle 40` | the shape, sides and angles marked |
 

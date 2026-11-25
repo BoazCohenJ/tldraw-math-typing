@@ -982,20 +982,24 @@
   const plotCmd = (rest) => {
     const { body: b1, params } = takeParams(rest);
     const r = takeRange(b1);
-    const parts = splitTop(r.body);
+    // Several curves: separated by commas, ";", "&" or "and".
+    const parts = splitTop(r.body.replace(/\s+and\s+|\s*[;&]\s*/g, ', '));
     if (!parts.length) throw new Error('what should I plot? e.g. plot sin(x)');
     const explicit = [];
     const implicit = [];
     for (const part of parts) {
-      const eq = part.split('=');
-      if (eq.length > 2) throw new Error(`"${part}" has more than one =`);
+      // f(x) = …, g(x) = … : a named function is y = …
+      const named = part.match(/^\s*([a-zA-Z])\s*\(\s*x\s*\)\s*=(.*)$/);
+      const eq = named ? ['y', named[2]] : part.split('=');
+      if (eq.length > 2) throw new Error(`"${part}" has more than one = (separate curves with commas)`);
       let lhs = eq.length === 2 ? parse(eq[0]) : { t: 'var', n: 'y' };
       let rhs = eq.length === 2 ? parse(eq[1]) : parse(eq[0]);
       for (const [k, v] of Object.entries(params)) {
         lhs = substitute(lhs, k, { t: 'num', v });
         rhs = substitute(rhs, k, { t: 'num', v });
       }
-      const label = eq.length === 2 ? `${pretty(lhs)} = ${pretty(rhs)}` : `y = ${pretty(rhs)}`;
+      const label = named ? `${named[1]}(x) = ${pretty(rhs)}`
+        : eq.length === 2 ? `${pretty(lhs)} = ${pretty(rhs)}` : `y = ${pretty(rhs)}`;
       const vars = new Set([...freeVars(lhs), ...freeVars(rhs)]);
       const other = [...vars].filter((v) => v !== 'x' && v !== 'y');
       if (other.length) throw new Error(`what is ${other.join(', ')}? add e.g. "where ${other[0]}=1"`);
@@ -1314,12 +1318,18 @@
   // Fractions typed as // and groups typed as {…} are read as / and (…).
   const asPlot = (src) => {
     const text = String(src).replace(/\u200B/g, '').replace(/\/\//g, '/').trim();
-    const sides = text.split('=');
-    if (sides.length !== 2) return null;
-    let vars;
-    try { vars = new Set(sides.flatMap((side) => [...freeVars(parse(side))])); } catch (_) { return null; }
-    // needs an x: "y = 3//4 + 1" is an equation to lay out, not a flat line
-    if (!vars.has('x') || ![...vars].every((v) => v === 'x' || v === 'y')) return null;
+    // one or more equations (y = …, f(x) = …, x² + y² = 25), separated like in /plot
+    const parts = splitTop(text.replace(/\s+and\s+|\s*[;&]\s*/g, ', '));
+    if (!parts.length) return null;
+    for (const part of parts) {
+      const named = part.match(/^\s*[a-zA-Z]\s*\(\s*x\s*\)\s*=(.*)$/);
+      const sides = named ? [named[1]] : part.split('=');
+      if (!named && sides.length !== 2) return null;
+      let vars;
+      try { vars = new Set(sides.flatMap((side) => [...freeVars(parse(side))])); } catch (_) { return null; }
+      // needs an x: "y = 3//4 + 1" is an equation to lay out, not a flat line
+      if (!vars.has('x') || ![...vars].every((v) => v === 'x' || v === 'y')) return null;
+    }
     return plotCmd(text);
   };
 

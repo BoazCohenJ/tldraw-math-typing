@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Math Typing for tldraw",
   "short_name": "Math Typing",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Type maths on tldraw.com: symbols as you type, real fractions and roots, a calculator, graphs and shapes. Not made by tldraw.",
   "homepage_url": "https://github.com/yotam1001/tldraw-math-typing",
   "icons": {

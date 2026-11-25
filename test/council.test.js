@@ -84,3 +84,17 @@ test('the invisible zero-width space never blocks a command', () => {
   assert.strictEqual(text('​/calc 2+2'), '2 + 2 = 4');
   assert.ok(ctx.MathTools.asPlot('​y = x^2'));
 });
+
+test('several curves, written in the ways students write them', () => {
+  const cap = (l) => run(l).caption;
+  assert.strictEqual(cap('/plot sin(x), cos(x)'), 'y = sin(x),  y = cos(x)');
+  assert.strictEqual(cap('/plot f(x)=x^2, g(x)=2x'), 'f(x) = x²,  g(x) = 2x');
+  assert.strictEqual(cap('/plot y=x^2 and y=2x'), 'y = x²,  y = 2x');
+  assert.strictEqual(cap('/plot x^2; 2x'), 'y = x²,  y = 2x');
+  assert.strictEqual(cap('/plot x^2 & 2x'), 'y = x²,  y = 2x');
+  assert.strictEqual(cap('/draw f(x) = x^2, g(x) = 2x'), 'f(x) = x²,  g(x) = 2x');
+  assert.ok(ctx.MathTools.asPlot('y = x^2, y = 2x'));
+  assert.ok(ctx.MathTools.asPlot('f(x) = x^2'));
+  assert.strictEqual(ctx.MathTools.asPlot('y = 3//4 + 1'), null);
+  assert.strictEqual(ctx.MathTools.asPlot('a//b = c'), null);
+});
