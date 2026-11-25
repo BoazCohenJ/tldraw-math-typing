@@ -74,7 +74,8 @@ you type a space, or `3//4` → ¾), off by default.
 | `/solve x^2-5x+6=0` | `x² − 5x + 6 = 0  ⇒  x = 2 or x = 3` |
 | `/simplify`, `/factor`, `/expand` … | `(x − 2)·(x − 3)` … |
 | `/plot sin(x), cos(x) from -pi to pi` | a graph under the line |
-| `/plot x^2+y^2=9`, `/plot x^2-6x+y^2+t=0 where t=5` | curves given by an equation |
+| `/plot x^2+y^2=9`, `/draw x^2+y^2=25`, `/plot x^2-6x+y^2+t=0 where t=5` | curves given by an equation (`/draw` plots anything in x and y) |
+| `/plot{…}`, `/draw{…}`, `\calc{…}` | braces and a backslash work too; other `/draw{…}` content is drawn as an equation |
 | `/draw triangle 3 4 5`, `right triangle 3 4`, `circle 3`, `ellipse 3 2`, `square 4`, `rectangle 3 by 5`, `hexagon 2`, `polygon 7 2`, `angle 40` | the shape, sides and angles marked |
 
 Lines without the slash are never run. Symbolic maths uses [nerdamer](https://github.com/jiggzson/nerdamer)

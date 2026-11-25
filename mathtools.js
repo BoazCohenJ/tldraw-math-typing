@@ -532,7 +532,7 @@
 
   // ---------------------------------------------------------------- commands
   // Commands start with a slash so ordinary notes ("solve for x…") never run by accident.
-  const COMMANDS = /^\s*\/(calc|calculate|eval|diff|derive|derivative|integrate|integral|solve|simplify|factor|factorise|factorize|expand|plot|graph|draw|shape)\b\s*(.*)$/i;
+  const COMMANDS = /^\s*[/\\](calc|calculate|eval|diff|derive|derivative|integrate|integral|solve|simplify|factor|factorise|factorize|expand|plot|graph|draw|shape)\b\s*(.*)$/i;
 
   // Splits "a, b, c" at top-level commas.
   const splitTop = (s) => {
@@ -1082,15 +1082,40 @@
     return { caption, figure: { bounds: { x0, x1, y0, y1 }, equal: true, size: [240, 240], items } };
   };
 
+  const SHAPE_WORD = /^(circle|ellipse|oval|square|rectangle|rect|right\s*triangle|equilateral|triangle|regular|polygon|pentagon|hexagon|heptagon|octagon|nonagon|decagon|angle)\b/i;
+  const balanced = (s) => {
+    let d = 0;
+    for (const c of s) {
+      if (c === '{') d++;
+      if (c === '}' && --d < 0) return false;
+    }
+    return d === 0;
+  };
+
   // Runs a command line. Returns { text } to replace the line, { figure, caption } to draw,
-  // or null when the line is not a command. Throws with a readable message on errors.
+  // { equation } to lay out as a drawn equation, or null when the line is not a command.
+  // Throws with a readable message on errors.
   const runCommand = (line, enabled = { cas: true, plot: true, shapes: true }) => {
     const m = String(line).match(COMMANDS);
     if (!m) return null;
     const cmd = m[1].toLowerCase();
-    const rest = m[2].trim();
+    let rest = m[2].trim();
     // "… /draw" at the end of a line is an equation to lay out, not a shape
     if (cmd === 'draw' && /\/draw\s*$/i.test(rest)) return null;
+    // /plot{x^2+y^2=25}: braces around the whole argument are optional
+    if (/^\{[\s\S]*\}$/.test(rest) && balanced(rest.slice(1, -1))) rest = rest.slice(1, -1).trim();
+    // (plain words like "/draw blob" still get the list of shapes)
+    if (cmd === 'draw' && rest && !SHAPE_WORD.test(rest) && /[=/^_{}()+\-*×·0-9²³√∫∑]/.test(rest)) {
+      // /draw x^2+y^2=25 draws the graph; anything else is an equation to lay out
+      let plottable = false;
+      try {
+        const sides = rest.split('=');
+        const vars = new Set(sides.flatMap((side) => [...freeVars(parse(side))]));
+        plottable = sides.length <= 2 && vars.size > 0 && [...vars].every((v) => v === 'x' || v === 'y');
+      } catch (_) { plottable = false; }
+      if (plottable && enabled.plot) return plotCmd(rest);
+      return { equation: rest };
+    }
     const kind = cmd === 'plot' || cmd === 'graph' ? 'plot' : cmd === 'draw' || cmd === 'shape' ? 'shapes' : 'cas';
     if (!enabled[kind]) return null;
     if (!rest) throw new Error(`/${cmd} what? e.g. ${kind === 'shapes' ? '/draw triangle 3 4 5' : kind === 'plot' ? '/plot sin(x)' : `/${cmd} x^2`}`);

@@ -260,6 +260,18 @@
     if (!res) return false;
     last = null;
     hideHints();
+    if (res.equation) {
+      // /draw{ … }: lay the equation out like "… /draw"
+      if (!canDraw(el)) {
+        toast('Math typing: /draw needs a plain text box (T tool)');
+        return true;
+      }
+      stack(el, info, {
+        length: info.before.length, text: info.before,
+        stack: { type: 'block', tree: MT.parseBlock(res.equation), pre: '' },
+      }, true);
+      return true;
+    }
     if (res.text) {
       replaceBeforeCaret(info, info.before.length, res.text);
       return true;

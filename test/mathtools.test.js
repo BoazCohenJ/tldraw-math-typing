@@ -88,3 +88,18 @@ test('shapes', () => {
   assert.strictEqual(run('draw hexagon 2').caption, 'regular 6-gon, side 2');
   assert.throws(() => run('draw blob'), /I can draw/);
 });
+
+test('/draw with an equation in x and y plots it; braces are optional', () => {
+  const run2 = (l) => ctx.MathTools.runCommand(l);
+  assert.strictEqual(run2('/draw x^2+y^2=25').caption, 'x² + y² = 25');
+  assert.strictEqual(run2('/draw x² + y² =25').caption, 'x² + y² = 25');
+  assert.strictEqual(run2('/plot{x^2+y^2=25}').caption, 'x² + y² = 25');
+  assert.strictEqual(run2('/draw{x^2+y^2=25}').caption, 'x² + y² = 25');
+  assert.strictEqual(run2('/calc{2^10}').text, '2¹⁰ = 1024');
+  assert.strictEqual(run2('/draw{triangle 3 4 5}').caption, 'triangle 3, 4, 5');
+  // other /draw{…} content is an equation to lay out
+  assert.strictEqual(JSON.stringify(run2('/draw{a//b = c}')), JSON.stringify({ equation: 'a//b = c' }));
+  assert.strictEqual(JSON.stringify(run2('/draw{x//{x+3} + 4}')), JSON.stringify({ equation: 'x//{x+3} + 4' }));
+  // backslash works like slash
+  assert.strictEqual(run2('\\plot{sin(x)}').caption, 'y = sin(x)');
+});
