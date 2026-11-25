@@ -1082,6 +1082,18 @@
     return { caption, figure: { bounds: { x0, x1, y0, y1 }, equal: true, size: [240, 240], items } };
   };
 
+  // The graph of an equation in x and y ("y = 3x^2 + 2x", "x^2+y^2=25", "1//x = y"), or null.
+  // Fractions typed as // and groups typed as {…} are read as / and (…).
+  const asPlot = (src) => {
+    const text = String(src).replace(/\/\//g, '/').trim();
+    const sides = text.split('=');
+    if (sides.length !== 2) return null;
+    let vars;
+    try { vars = new Set(sides.flatMap((side) => [...freeVars(parse(side))])); } catch (_) { return null; }
+    if (!vars.size || ![...vars].every((v) => v === 'x' || v === 'y')) return null;
+    return plotCmd(text);
+  };
+
   const SHAPE_WORD = /^(circle|ellipse|oval|square|rectangle|rect|right\s*triangle|equilateral|triangle|regular|polygon|pentagon|hexagon|heptagon|octagon|nonagon|decagon|angle)\b/i;
   const balanced = (s) => {
     let d = 0;
@@ -1107,14 +1119,8 @@
     // (plain words like "/draw blob" still get the list of shapes)
     if (cmd === 'draw' && rest && !SHAPE_WORD.test(rest) && /[=/^_{}()+\-*×·0-9²³√∫∑]/.test(rest)) {
       // /draw x^2+y^2=25 draws the graph; anything else is an equation to lay out
-      let plottable = false;
-      try {
-        const sides = rest.split('=');
-        const vars = new Set(sides.flatMap((side) => [...freeVars(parse(side))]));
-        plottable = sides.length <= 2 && vars.size > 0 && [...vars].every((v) => v === 'x' || v === 'y');
-      } catch (_) { plottable = false; }
-      if (plottable && enabled.plot) return plotCmd(rest);
-      return { equation: rest };
+      const plot = enabled.plot ? asPlot(rest) : null;
+      return plot || { equation: rest };
     }
     const kind = cmd === 'plot' || cmd === 'graph' ? 'plot' : cmd === 'draw' || cmd === 'shape' ? 'shapes' : 'cas';
     if (!enabled[kind]) return null;
@@ -1131,5 +1137,5 @@
     }
   };
 
-  root.MathTools = { normalize, parse, evaluate, pretty, toNerd, runCommand, COMMANDS };
+  root.MathTools = { normalize, parse, evaluate, pretty, toNerd, runCommand, asPlot, COMMANDS };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

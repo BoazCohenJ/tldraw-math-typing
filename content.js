@@ -157,7 +157,9 @@
     stackResult = null;
     const nonce = Math.random().toString(36).slice(2);
     document.dispatchEvent(new CustomEvent('mathtyping:stack', { detail: JSON.stringify({ ...req, nonce }) }));
-    return !!(stackResult && stackResult.ok);
+    if (stackResult && stackResult.ok) return true;
+    toast(`Math typing: couldn't draw it: ${(stackResult && stackResult.reason) || 'the page script did not answer'}`, 6000);
+    return false;
   };
 
   let stackResult = null;
@@ -236,7 +238,16 @@
     const m = info && info.before.match(/^([\s\S]*?)\s*\/draw\s?$/);
     if (!m || !m[1].trim()) return false;
     if (!canDraw(el)) {
-      toast('Math typing: /draw needs a plain text box (T tool)');
+      toast('Math typing: /draw needs a plain text box (T tool)', 5000);
+      return true;
+    }
+    // An equation in x and y gets its graph; anything else is laid out as an equation.
+    let plot = null;
+    try { plot = settings.categories.plot && TOOLS ? TOOLS.asPlot(m[1]) : null; } catch (_) { plot = null; }
+    if (plot) {
+      last = null;
+      hideHints();
+      drawFigure(el, info, plot, plot.caption);
       return true;
     }
     stack(el, info, {
@@ -254,7 +265,7 @@
     try {
       res = TOOLS.runCommand(info.before, { cas: on.cas, plot: on.plot, shapes: on.shapes });
     } catch (err) {
-      toast(`Math typing: ${err.message}`);
+      toast(`Math typing: ${err.message}`, 5000);
       return true; // keep the line so it can be fixed
     }
     if (!res) return false;
@@ -280,12 +291,19 @@
       toast('Math typing: graphs and shapes need a plain text box (T tool)');
       return true;
     }
-    const caption = /^\s*draw\b/i.test(info.before) ? '' : res.caption;
+    drawFigure(el, info, res, /^\s*[/\\]draw\s+(?:circle|ellipse|oval|square|rect|right|equilateral|triangle|regular|polygon|pentagon|hexagon|heptagon|octagon|nonagon|decagon|angle)/i.test(info.before) ? '' : res.caption);
+    return true;
+  };
+
+  // Replaces the line with its caption and draws the figure under it; puts the line back on failure.
+  const drawFigure = (el, info, res, caption) => {
+    const original = info.before;
     replaceBeforeCaret(info, info.before.length, caption);
     setTimeout(() => {
-      if (!askPage({ type: 'figure', figure: res.figure })) toast('Math typing: could not draw that here');
+      if (askPage({ type: 'figure', figure: res.figure })) return;
+      const now = caretInfo(el);
+      if (now && now.before.endsWith(caption)) replaceBeforeCaret(now, caption.length, original);
     }, 30);
-    return true;
   };
 
   // ---------------------------------------------------------------- hints
@@ -536,7 +554,7 @@
 
   let toastEl = null;
   let toastTimer = 0;
-  const toast = (msg) => {
+  const toast = (msg, ms = 1600) => {
     if (!toastEl) {
       toastEl = document.createElement('div');
       Object.assign(toastEl.style, {
@@ -549,6 +567,6 @@
     toastEl.textContent = msg;
     toastEl.style.display = 'block';
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, 1600);
+    toastTimer = setTimeout(() => { toastEl.style.display = 'none'; }, ms);
   };
 })();

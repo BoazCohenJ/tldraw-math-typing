@@ -399,16 +399,49 @@
     return true;
   };
 
+  // tldraw's editor. The anonymous board puts it on window.editor; signed-in files may not,
+  // so otherwise it is found through React's internals on the canvas element.
+  const isEditor = (v) => !!v && typeof v === 'object' && typeof v.createShape === 'function' &&
+    typeof v.getEditingShapeId === 'function' && typeof v.getShapePageBounds === 'function';
+  let found = null;
+  const findEditor = () => {
+    if (isEditor(window.editor)) return window.editor;
+    if (isEditor(window.app)) return window.app;
+    if (found && !found.isDisposed) return found;
+    const start = document.activeElement?.closest?.('.tl-container') ? document.activeElement : document.querySelector('.tl-canvas, .tl-container');
+    for (let el = start; el; el = el.parentElement) {
+      const key = Object.keys(el).find((k) => k.startsWith('__reactFiber$'));
+      if (!key) continue;
+      for (let f = el[key], i = 0; f && i < 400; f = f.return, i++) {
+        for (const v of [f.memoizedProps?.editor, f.memoizedProps?.value, f.stateNode?.editor]) {
+          if (isEditor(v)) { found = v; return v; }
+        }
+        // hooks: useState/useRef holding the editor
+        for (let h = f.memoizedState, j = 0; h && typeof h === 'object' && j < 50; h = h.next, j++) {
+          const v = h.memoizedState;
+          if (isEditor(v)) { found = v; return v; }
+          if (v && isEditor(v.current)) { found = v.current; return v.current; }
+        }
+      }
+      break;
+    }
+    return null;
+  };
+
   document.addEventListener('mathtyping:stack', (ev) => {
     let req;
     try { req = JSON.parse(ev.detail); } catch (_) { return; }
-    const editor = window.editor;
     let ok = false;
+    let reason = '';
     try {
-      ok = !!editor && handle(editor, req);
+      const editor = findEditor();
+      if (!editor) reason = "couldn't find tldraw's editor on this page";
+      else ok = handle(editor, req);
+      if (editor && !ok) reason = 'the caret is not in a plain text box';
     } catch (err) {
+      reason = String(err && err.message || err);
       console.warn('[math typing] could not draw it', err);
     }
-    document.dispatchEvent(new CustomEvent('mathtyping:stack-done', { detail: JSON.stringify({ ok, nonce: req.nonce }) }));
+    document.dispatchEvent(new CustomEvent('mathtyping:stack-done', { detail: JSON.stringify({ ok, reason, nonce: req.nonce }) }));
   });
 })();
