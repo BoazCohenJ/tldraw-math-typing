@@ -93,7 +93,9 @@ in your browser, and keeps its settings in the browser's extension storage.
 - `rules.js` typing shortcuts and `/draw` parsing · `mathtools.js` calculator, graphs, shapes
 - `content.js` runs on tldraw.com · `page.js` draws with tldraw's editor (page world)
 - `background.js` attaches to open tabs after install, update or Allow
-- `fonts.js` fallback fonts, built by `tools/build-fonts.py` (Noto fonts, SIL OFL: `fonts/OFL.txt`)
+- `fonts.js` fallback fonts, built by `tools/build-fonts.py` (Noto fonts, SIL OFL: `fonts/OFL.txt`;
+  DejaVu Sans Bold for the handwriting style's symbols: `fonts/DejaVu-LICENSE.txt`)
+- `cas-worker.js` runs the calculator in the background, loaded only when you use it, with a time limit
 - `vendor/nerdamer` symbolic maths (MIT, unmodified 1.1.13) · `popup.*` the toolbar popup
 - `AMO.md` store listing, privacy statement and notes for reviewers
 

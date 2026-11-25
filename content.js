@@ -369,6 +369,11 @@
   const runCommandLine = (el, info) => {
     if (!TOOLS) return false;
     const on = settings.categories;
+    if (TOOLS.commandKind(info.before) === 'cas') {
+      if (!on.cas) return false;
+      runCas(el, info.before);
+      return true;
+    }
     let res;
     try {
       res = TOOLS.runCommand(info.before, { cas: on.cas, plot: on.plot, shapes: on.shapes, draw: on.draw });
@@ -403,6 +408,33 @@
       .test(visible(info.before));
     drawFigure(el, info, res, isShape ? '' : res.caption);
     return true;
+  };
+
+  // Calculator commands run in the background worker (cas-worker.js). The answer replaces the
+  // line only if the line is still what was sent.
+  const runCas = async (el, line) => {
+    last = null;
+    hideHints();
+    const slow = setTimeout(() => toast('Math typing: working it out…', 6000), 400);
+    let reply;
+    try {
+      reply = await ext.runtime.sendMessage({ type: 'mathtyping:cas', line, enabled: { cas: true, plot: false, shapes: false } });
+    } catch (err) {
+      reply = { error: 'the calculator is not available; reload the add-on' };
+    }
+    clearTimeout(slow);
+    if (dead) return;
+    if (!reply || reply.error || !reply.res || reply.res.text == null) {
+      toast(`Math typing: ${(reply && reply.error) || "couldn't work that out"}`, 5000);
+      return;
+    }
+    if (toastEl) toastEl.style.display = 'none';
+    const now = document.activeElement === el ? caretInfo(el) : null;
+    if (!now || now.before !== line) {
+      toast('Math typing: the line changed before the answer came back', 4000);
+      return;
+    }
+    replaceBeforeCaret(now, line.length, reply.res.text);
   };
 
   // ---------------------------------------------------------------- live root bar

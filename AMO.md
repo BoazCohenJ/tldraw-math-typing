@@ -35,9 +35,12 @@ entirely in the browser, and stores its settings with `storage.local`. The manif
 ## Notes for reviewers
 - **Build:** no bundler or minifier; every file in the package is the source. `fonts.js` is generated
   by `tools/build-fonts.py` (in the repository, not the package) from Noto Sans Math, Noto Sans and
-  Noto Serif (Google Fonts, SIL OFL 1.1, licence in `fonts/OFL.txt`): it subsets them to the maths
+  Noto Serif (Google Fonts, SIL OFL 1.1, licence in `fonts/OFL.txt`) and DejaVu Sans Bold (Bitstream Vera
+  licence in `fonts/DejaVu-LICENSE.txt`; the subset is renamed as that licence asks): it subsets them to the maths
   characters tldraw's fonts lack and inlines them as base64, because a content script can't fetch its
   own files.
+- **cas-worker.js:** the calculator commands run in a Worker started by the background script, so the
+  algebra library only loads when a command is used and a slow command is stopped after 6 seconds.
 - **vendor/nerdamer:** unmodified nerdamer 1.1.13 (MIT, https://github.com/jiggzson/nerdamer), used for
   symbolic derivatives, integrals and solving. The linter flags `new Function` in nerdamer.core.js
   (its numeric `build()`). Our commands avoid the paths that use it, and Firefox's extension CSP

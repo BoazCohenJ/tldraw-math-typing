@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Math Typing for tldraw",
   "short_name": "Math Typing",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Type maths on tldraw.com: symbols as you type, real fractions and roots, a calculator, graphs and shapes. Not made by tldraw.",
   "homepage_url": "https://github.com/yotam1001/tldraw-math-typing",
   "icons": {
@@ -30,12 +30,7 @@
   "content_scripts": [
     {
       "matches": ["https://tldraw.com/*", "https://*.tldraw.com/*"],
-      "js": [
-        "rules.js", "fonts.js",
-        "vendor/nerdamer/nerdamer.core.js", "vendor/nerdamer/Algebra.js",
-        "vendor/nerdamer/Calculus.js", "vendor/nerdamer/Solve.js",
-        "mathtools.js", "content.js"
-      ],
+      "js": ["rules.js", "fonts.js", "mathtools.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     },

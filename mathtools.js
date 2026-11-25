@@ -1367,5 +1367,14 @@
     }
   };
 
-  root.MathTools = { normalize, parse, evaluate, pretty, toNerd, runCommand, asPlot, COMMANDS };
+  // 'cas' for the calculator commands (they need the algebra library, which runs in a worker),
+  // 'local' for graphs, shapes and /draw, null when the line is not a command.
+  const commandKind = (line) => {
+    const m = String(line).replace(/​/g, '').match(COMMANDS);
+    if (!m) return null;
+    const cmd = m[1].toLowerCase();
+    return /^(plot|graph|draw|shape)$/.test(cmd) ? 'local' : 'cas';
+  };
+
+  root.MathTools = { normalize, parse, evaluate, pretty, toNerd, runCommand, asPlot, commandKind, COMMANDS };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

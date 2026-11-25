@@ -11,12 +11,14 @@ mixes several fonts. This picks, per tldraw font, which characters get a fallbac
   3. Every superscript, subscript and the fraction slash comes from Noto Sans (Noto Serif for
      the serif font), even where tldraw's font has some of them: it has ¹²³ but not ⁻ ⁺ ⁿ ˣ,
      so x⁻¹² would mix two fonts and two sizes inside one exponent.
+  5. The handwriting font's maths symbols come from DejaVu Sans Bold (heavy like the handwriting;
+     Noto Sans Math only comes in one light weight), renamed as its licence asks.
   4. Letters a tldraw font lacks (Greek in Shantell Sans and Plex Mono) come from Noto Sans/Serif,
      which match text better than a math font. For the handwriting font these use bold Noto Sans to
      match its heavy strokes. Noto Sans Math only comes in one weight, so math symbols stay regular.
 
 Usage:
-  python tools/build-fonts.py <tldraw fonts dir> <NotoSansMath> <NotoSans 500> <NotoSerif 500> <NotoSans 700>
+  python tools/build-fonts.py <tldraw fonts dir> <NotoSansMath> <NotoSans 500> <NotoSerif 500> <NotoSans 700> <DejaVuSans-Bold>
 The tldraw fonts dir holds Shantell_Sans-*, IBMPlexSans-*, IBMPlexSerif-*, IBMPlexMono-* files.
 Needs: pip install fonttools brotli
 """
@@ -30,7 +32,7 @@ from fontTools import subset
 from fontTools.ttLib import TTFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-tl_dir, math_src, sans_src, serif_src, bold_src = sys.argv[1:6]
+tl_dir, math_src, sans_src, serif_src, bold_src, bold_math_src = sys.argv[1:7]
 
 chars = json.loads(subprocess.check_output(['node', os.path.join(ROOT, 'tools', 'chars.js')], cwd=ROOT))
 cps = sorted({ord(c) for c in chars})
@@ -64,7 +66,7 @@ def ranges(points):
     return ', '.join(out)
 
 
-faces, need = {}, {'math.woff2': set(), 'text-sans.woff2': set(), 'text-serif.woff2': set(), 'text-draw.woff2': set()}
+faces, need = {}, {'math.woff2': set(), 'math-draw.woff2': set(), 'text-sans.woff2': set(), 'text-serif.woff2': set(), 'text-draw.woff2': set()}
 report = []
 for name, prefix in TL.items():
     have = tl_cmap(prefix)
@@ -81,10 +83,11 @@ for name, prefix in TL.items():
     to_text &= text_cov
     uncovered = {c for c in missing if c not in to_math and c not in to_text}
     faces[name] = [
-        {'file': 'math.woff2', 'range': ranges(to_math)},
+        # The handwriting font has heavy strokes: its maths symbols come from DejaVu Sans Bold.
+        {'file': 'math-draw.woff2' if name == 'draw' else 'math.woff2', 'range': ranges(to_math)},
         {'file': text_file, 'range': ranges(to_text)},
     ]
-    need['math.woff2'] |= to_math
+    need['math-draw.woff2' if name == 'draw' else 'math.woff2'] |= to_math
     need[text_file] |= to_text
     report.append(f'{name}: {len(to_math)} from Noto Sans Math, {len(to_text)} from {text_file}, '
                   f'{len(have & set(cps))} kept in tldraw font, uncovered: {"".join(map(chr, sorted(uncovered))) or "none"}')
@@ -94,7 +97,7 @@ import io
 
 data = {}
 for out, src in [('math.woff2', math_src), ('text-sans.woff2', sans_src), ('text-serif.woff2', serif_src),
-                 ('text-draw.woff2', bold_src)]:
+                 ('text-draw.woff2', bold_src), ('math-draw.woff2', bold_math_src)]:
     opts = subset.Options()
     opts.flavor = 'woff2'
     opts.layout_features = ['*']
@@ -104,6 +107,13 @@ for out, src in [('math.woff2', math_src), ('text-sans.woff2', sans_src), ('text
     sub = subset.Subsetter(opts)
     sub.populate(unicodes=sorted(need[out]))
     sub.subset(font)
+    if out == 'math-draw.woff2':
+        # DejaVu's licence (Bitstream Vera terms) asks changed copies not to use the names
+        # "Bitstream" or "Vera": the subset gets its own name.
+        for rec in font['name'].names:
+            if rec.nameID in (1, 3, 4, 6, 16, 17):
+                rec.string = {1: 'MathTyping Symbols', 3: 'MathTyping Symbols Bold', 4: 'MathTyping Symbols Bold',
+                              6: 'MathTypingSymbols-Bold', 16: 'MathTyping Symbols', 17: 'Bold'}[rec.nameID]
     buf = io.BytesIO()
     font.flavor = 'woff2'
     font.save(buf)
